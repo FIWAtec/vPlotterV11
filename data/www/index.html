@@ -1,0 +1,1134 @@
+ <!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MANIAC</title>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons/font/bootstrap-icons.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.0/dist/css/bootstrap.min.css" rel="stylesheet"
+    integrity="sha384-gH2yIJqKdNHPEq0n4Mqa/HGKIhSkIHeL5AyhkYV8i59U5AR6csBvApHHNl/vI1Bx" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.9.1/font/bootstrap-icons.css">
+  <link rel="stylesheet/less" type="text/css" href="dpad.less" />
+  <link href="main.css" rel="stylesheet">
+
+  <style>
+    .bd-placeholder-img {
+      font-size: 1.125rem;
+      text-anchor: middle;
+      user-select: none;
+    }
+    @media (min-width: 768px) {
+      .bd-placeholder-img-lg { font-size: 3.5rem; }
+    }
+  </style>
+</head>
+<body class="text-center">
+
+  <!-- FX OVERLAY: wirklich ganz oben -->
+  <div id="fxWrap" aria-hidden="true">
+    <canvas id="fxA"></canvas>
+    <canvas id="fxB"></canvas>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-throttle-debounce/1.1/jquery.ba-throttle-debounce.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/less"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.17/paper-full.min.js"></script>
+
+  <script src="file_manager_v2.js"></script>
+  <script src="ui_hud.js"></script>
+  <script src="main.js" type="module"></script>
+  <script src="fx_engine.js" type="module"></script>
+<main class="form-signin w-100 m-auto">
+
+    <!-- LOADING -->
+    <div id="loadingSlide" class="muralSlide" style="display:none;">
+      <div class="spinner-border mb-5 loading"></div>
+      <h6>Upload ...</h6>
+    </div>
+
+    <!-- RETRACT BELTS -->
+    <div id="retractBeltsSlide" class="muralSlide" style="display:none;">
+      <h3 class="mb-2 fw-normal">Referenzieren</h3>
+      <h6 class="mb-5"><small class="text-muted"></small></h6>
+
+      <div class="form-check form-switch mb-5">
+        <input class="form-check-input" style="transform:scale(2);" type="checkbox" id="leftMotorToggle">
+        <label for="leftMotorToggle">Motor Links</label>
+      </div>
+
+      <div class="form-check form-switch mb-5">
+        <input class="form-check-input" style="transform:scale(2);" type="checkbox" id="rightMotorToggle">
+        <label for="rightMotorToggle">Motor Rechts</label>
+      </div>
+
+      <button class="w-100 btn btn-lg btn-primary mb-5" id="beltsRetracted">Riemen sind eingezogen</button>
+    </div>
+
+    <!-- DISTANCE BETWEEN ANCHORS -->
+    <div id="distanceBetweenAnchorsSlide" class="muralSlide" style="display:none;">
+      <h3 class="mb-2 fw-normal">Abstand eingeben ... </h3>
+      <h6 class="mb-5"><small class="text-muted"></small></h6>
+
+      <input type="number" class="form-control mb-5" id="distanceInput">
+      <button class="w-100 btn btn-lg btn-primary mb-5" id="setDistance">Weiter</button>
+    </div>
+
+    <!-- EXTEND TO HOME -->
+    <div id="extendToHomeSlide" class="muralSlide" style="display:none;">
+      <h3 class="mb-2 fw-normal">Grundstellung</h3>
+      <h6 class="mb-5"><small class="text-muted"></small></h6>
+
+      <button class="w-100 btn btn-lg btn-primary mb-5" id="extendToHome">Weiter</button>
+      <div class="spinner-border mb-5 loading" id="extendingSpinner" style="visibility:hidden;"></div>
+    </div>
+
+    <!-- PEN CALIBRATION -->
+    <div id="penCalibrationSlide" class="muralSlide" style="display:none;">
+      <h3 class="mb-2 fw-normal">Stiftkalibrierung</h3>
+      <h6 class="mb-5"><small class="text-muted"></small></h6>
+
+      <input type="range" class="form-range mb-5 text-center" min="0" max="90" id="servoRange" value="0">
+
+      <div class="btn-group mb-3 btn-group-lg">
+        <button type="button" class="btn btn-primary fs-4" id="penMinus">-</button>
+        <button type="button" class="btn btn-primary fs-4" id="penPlus">+</button>
+      </div>
+
+      <button class="w-100 btn btn-lg btn-primary mb-5" id="setPenDistance">Weiter</button>
+    </div>
+
+    <!-- SVG UPLOAD -->
+    <div id="svgUploadSlide" class="muralSlide" style="display:none;">
+      <h3 class="mb-2 fw-normal">Bild auswählen ...</h3>
+      <h6 class="mb-2"><small class="text-muted"> </small></h6>
+      
+      <img id="sourceSvg" class="img-thumbnail mb-2 svg-control" style="display:none;width:100%;">
+
+      <!-- D-PAD SVG CONTROL -->
+      <div class="container svg-control mb-2" style="display:none;">
+        <div class="row">
+          <div class="col-10 align-self-center">
+            <div class="set blue">
+              <nav class="d-pad">
+                <a class="up" href="#"></a>
+                <a class="right" href="#"></a>
+                <a class="down" href="#"></a>
+                <a class="left" href="#"></a>
+              </nav>
+            </div>
+          </div>
+
+          <div class="col-2 align-self-center">
+            <button class="btn btn-primary mb-2" id="zoomIn"><i class="bi-zoom-in fs-2"></i></button>
+            <button class="btn btn-primary mb-2" id="zoomOut"><i class="bi-zoom-out fs-2"></i></button>
+            <button class="btn btn-primary" id="resetTransform"><i class="bi-arrow-counterclockwise fs-2"></i></button>
+          </div>
+        </div>
+        <div class="row">
+          <h6><small class="text-muted" id="transformText"></small></h6>
+        </div>
+      </div>
+      <input class="form-control form-control-lg mb-2" id="uploadSvg" type="file" accept=".svg,.png">
+      <button class="w-100 btn btn-lg btn-primary mb-6" id="preview" disabled>weiter</button>
+
+      <!-- SVG-Serie: SD-Ordner direkt wählen (ohne Dummy-SVG) -->
+      <button class="w-100 btn btn-lg btn-warning mb-2" id="startSvgBatchSelectFolder" type="button">
+        SVG-SERIE (SD-Ordner)
+      </button>
+      
+        <div class="mt-2" id="pngTools" style="display:none;">
+          <div class="mb-2">
+            <label class="form-label mb-1">PNG-Modus</label>
+            <select class="form-select" id="pngMode">
+              <option value="bw">Schwarz/Weiß (alt)</option>
+              <option value="colors" selected>Farblayer (neu)</option>
+              <option value="raster">Raster-Direkt (ohne Vektor)</option>
+            </select>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label mb-1">Farbtoleranz</label>
+            <input type="range" class="form-range" id="pngTolerance" min="10" max="140" value="70">
+            <div class="text-muted" style="font-size:12px;">Höher = mehr wird der Farbe zugeordnet</div>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label mb-1">Flecken entfernen</label>
+            <input type="range" class="form-range" id="pngMinPixels" min="10" max="800" value="40">
+          </div>
+
+          <div class="mb-2" id="rasterOpts" style="display:none;">
+            <label class="form-label mb-1">Raster-Auflösung (Step px)</label>
+            <input type="range" class="form-range" id="rasterStep" min="1" max="12" value="2">
+          </div>
+
+          <div class="mt-2">
+            <div class="fw-semibold mb-1">Erkannte Farblayer</div>
+            <div id="layerList" class="d-grid gap-2"></div>
+            <button class="btn btn-warning mt-2" id="startLayerJob" type="button" disabled>
+              Farblayer nacheinander malen
+            </button>
+          </div>
+        </div>
+
+    </div>
+
+    <!-- CHOOSE RENDERER -->
+    <div id="chooseRendererSlide" class="muralSlide" style="display:none;">
+      <h3 class="mb-2 fw-normal">Rendering-Methode wählen</h3>
+
+      <button class="w-100 btn btn-lg btn-primary mb-5 mt-5" id="pathTracing">
+        Pfad-Nachverfolgung<br><sub>Gut für die meisten Linienzeichnungen</sub>
+      </button>
+      <button class="w-100 btn btn-lg btn-primary mb-5" id="vectorRasterVector">
+        Vektor → Raster → Vektor<br><sub>Erhält die Strichbreite</sub>
+      </button>
+
+      <button class="w-100 btn btn-lg btn-secondary mt-3 backToSvgSelect">Zurück</button>
+    </div>
+
+    <!-- DRAWING PREVIEW -->
+    <div id="drawingPreviewSlide" class="muralSlide" style="display:none;">
+      <h3 class="mb-2 fw-normal">Zeichenvorschau</h3>
+      <img id="previewSvg" class="img-thumbnail mb-2 svg-preview" style="display:none;">
+      <div class="progress mb-2" style="height:20px;">
+        <div class="progress-bar progress-bar-striped progress-bar-animated"
+            id="progressBar" style="width:100%;"></div>
+      </div>
+
+      <h6 class="mb-2 fw-normal svg-preview" style="display:none;" id="distances"></h6>
+
+      <!-- JOB PREVIEW (SIMULATION + START POSITION) -->
+      <div id="jobPreviewWrap" class="job-preview-wrap" style="display:none;">
+        <div class="job-canvas-card mb-2">
+          <div class="job-canvas-wrap">
+            <canvas id="jobPreviewCanvas" width="640" height="420"></canvas>
+            <canvas id="jobPreviewOverlay" width="640" height="420"></canvas>
+          </div>
+        </div>
+
+        <div class="card p-2 mb-2 job-preview-controls">
+          <div class="d-grid gap-2">
+            <button class="btn btn-outline-light" id="simPlayPause" type="button" disabled>Vorschau </button>
+
+            <div>
+              <div class="d-flex justify-content-between align-items-center">
+                <label for="startScrubber" class="form-label mb-1">Startpunkt wählen</label>
+                <small class="text-muted" id="startScrubberText">—</small>
+              </div>
+              <input type="range" class="form-range" id="startScrubber" min="0" max="100" value="0" disabled>
+            </div>
+
+            <div>
+              <div class="d-flex justify-content-between align-items-center">
+                <label for="simSpeed" class="form-label mb-1">Vorschau-Speed</label>
+                <small class="text-muted" id="simSpeedText">15×</small>
+              </div>
+              <input type="range" class="form-range" id="simSpeed" min="1" max="30" value="15" disabled>
+            </div>
+
+            <button class="btn btn-outline-primary" id="downloadCommandsLocal" type="button" disabled>
+              Commands herunterladen
+            </button>
+
+            <button class="btn btn-outline-secondary" id="downloadCommandsFromDevice" type="button">
+              Commands importieren
+            </button>
+
+            <input type="file" id="importCommandsInput" accept=".txt,.commands,text/plain" style="display:none">
+          </div>
+
+          <div class="small text-muted mt-2" id="commandsInfo">—</div>
+          <div class="small mt-1">
+            <a href="#" id="downloadCommandsDeviceLink" class="link-light link-underline-opacity-0 link-underline-opacity-75-hover">vom Gerät herunterladen</a>
+          </div>
+        </div>
+      </div>
+
+
+      <label for="infillDensity" class="form-label mb-0">Füllungsdichte</label>
+      <input type="range" class="form-range mb-2 text-center" min="0" max="4" id="infillDensity" value="0">
+      <label for="turdSize" class="form-label mb-0">Flecken entfernen</label>
+      <input type="range" class="form-range mb-2 text-center" min="2" max="200" step="11" id="turdSize" value="2">
+      <input class="form-check-input mb-2" type="checkbox" id="flattenPathsCheckbox">
+      <label class="form-check-label" for="flattenPathsCheckbox">Pfade glätten</label>
+      <button class="w-100 btn btn-lg btn-primary mb-2" id="acceptSvg" disabled>Weiter</button>
+      <button class="w-100 btn btn-lg btn-secondary mb-5 backToSvgSelect">Zurück</button>
+    </div>
+
+    <!-- UPLOAD PROGRESS -->
+    <div id="uploadProgress" class="muralSlide" style="display:none;">
+      <h3 class="mb-2 fw-normal">Wird hochgeladen…</h3>
+      <div class="progress mb-2" id="uploadProgressBarWrap" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+        <div class="progress-bar" style="width:0%"></div>
+      </div>
+      <div class="progress mb-2" id="verificationProgress" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+        <div class="progress-bar bg-success" style="width:0%"></div>
+      </div>
+    </div>
+
+    <!-- BEGIN DRAWING -->
+    <div id="beginDrawingSlide" class="muralSlide" style="display:none;">
+      <h3 class="mb-5 fw-normal">Mural ist bereit!</h3>
+
+      <button class="w-100 btn btn-lg btn-primary mb-5" id="beginDrawing">START MALEN</button>
+      <button class="w-100 btn btn-lg btn-warning mb-3" id="startSvgBatch">
+        SVG-SERIE (Ordner)
+      </button>
+      <button class="w-100 btn btn-lg btn-secondary mb-5" id="reset">RESET</button>
+    </div>
+
+    <!-- DRAWING -->
+    <div id="drawingBegan" class="muralSlide" style="display:none;">
+      <h3 class="mb-2 fw-normal">Malen aktiv!</h3>
+
+      <!-- LIVE MALBEREICH (PLAN + AKTUELLER STROKE IN NEON GELB) -->
+      <div class="job-canvas-card mb-3">
+        <div class="job-canvas-wrap">
+          <canvas id="jobLiveCanvas" width="640" height="420"></canvas>
+          <canvas id="jobLiveOverlay" width="640" height="420"></canvas>
+        </div>
+      </div>
+
+      <div class="d-grid gap-2 mb-3">
+        <button class="btn btn-warning" id="pauseBtn" type="button">Pause</button>
+        <button class="btn btn-danger" id="stopBtn" type="button">Malen beenden</button>
+      </div>
+
+      <div class="telemetry card p-3 mb-3">
+        <div id="coordsDisplay">X: –  Y: –</div>
+        <div class="progress mt-2" style="height:18px;">
+          <div class="progress-bar progress-bar-striped progress-bar-animated"
+              id="drawProgressBar" style="width:0%"></div>
+        </div>
+        <div class="mt-1 text-center">
+          <small id="drawProgressText">0 %</small>
+        </div>
+      </div>
+    </div>
+
+  <!-- FOOTER -->
+  <div class="mt-5"><h6 class="m-0">MANIAC Version v10.0.03</h6></div>
+
+</main>
+
+
+
+<!-- TOOLS MODAL -->
+<div class="modal fade" id="toolsModal" tabindex="-1" aria-labelledby="toolsModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+    <div class="modal-content tools-modal shadow-sm">
+
+      <div class="modal-header tools-modal-header">
+        <div>
+          <h5 class="modal-title mb-0" id="toolsModalLabel">Einstellungen</h5>
+          <div class="small text-muted">Service und System</div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body p-0">
+        <!-- scroll area -->
+        <div class="tools-scroll p-3">
+
+          <!-- SECTION: PULSBREITE SETTINGS
+          <section class="tools-section card glass-card p-3" id="toolsSecPulse">
+            <div class="section-head d-flex align-items-center justify-content-between">
+              <div>
+                <div class="small text-uppercase text-muted fw-semibold">Tuning</div>
+                <div class="fw-bold">Pulsbreite (STEP)</div>
+                <div class="text-muted small">Pulsbreite in µs pro Motor (wird gespeichert)</div>
+              </div>
+              <span class="badge rounded-pill bg-secondary">µs</span>
+            </div>
+
+            <div class="row g-2 mt-2">
+              <div class="col-12 col-md-6">
+                <label class="form-label mb-1">Links (Motor L)</label>
+                <input id="pulseWidthLeft" type="number" min="1" max="50" step="1"
+                       class="form-control"
+                       placeholder="z.B. 2">
+              </div>
+
+              <div class="col-12 col-md-6">
+                <label class="form-label mb-1">Rechts (Motor R)</label>
+                <input id="pulseWidthRight" type="number" min="1" max="50" step="1"
+                       class="form-control"
+                       placeholder="z.B. 2">
+              </div>
+            </div>
+
+            <div class="d-flex gap-2 mt-3">
+              <button id="btnLoadPulseWidths" class="btn btn-outline-primary flex-fill">
+                Laden
+              </button>
+              <button id="btnSavePulseWidths" class="btn btn-primary flex-fill">
+                Speichern
+              </button>
+            </div>
+
+            <div id="pulseWidthHint" class="text-muted small mt-2">
+              Hinweis: typische Werte 2–5 µs. Zu klein kann Steps verschlucken.
+            </div>
+          </section> -->
+
+
+          <!-- SECTION: MOTOR -->
+          <section class="tools-section mt-3" id="toolsSecMotor">
+            <div class="section-title d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+              <div>
+                <div class="small text-uppercase text-muted fw-semibold">Steuerung</div>
+                <h6 class="mb-0 fw-semibold">Motoren</h6>
+              </div>
+              <span class="badge bg-secondary">Manuell</span>
+            </div>
+
+            <div class="small text-muted mb-3">Motoren steuern</div>
+
+            <div class="card glass-card p-3">
+              <div class="row g-3">
+                <div class="col-12 col-md-6">
+                  <label for="leftMotorTool" class="form-label d-flex justify-content-between align-items-center mb-1">
+                    <span>Linker Motor</span>
+                    <span class="badge bg-light text-dark" id="leftMotorValue">0</span>
+                  </label>
+                  <input type="range" class="form-range" min="-1" max="1" step="1" id="leftMotorTool" value="0">
+                  <div class="d-flex justify-content-between small text-muted">
+                    <span>−1</span><span>0</span><span>+1</span>
+                  </div>
+                </div>
+
+                <div class="col-12 col-md-6">
+                  <label for="rightMotorTool" class="form-label d-flex justify-content-between align-items-center mb-1">
+                    <span>Rechter Motor</span>
+                    <span class="badge bg-light text-dark" id="rightMotorValue">0</span>
+                  </label>
+                  <input type="range" class="form-range" min="-1" max="1" step="1" id="rightMotorTool" value="0">
+                  <div class="d-flex justify-content-between small text-muted">
+                    <span>−1</span><span>0</span><span>+1</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Driver Enable -->
+            <div class="card glass-card mt-3" id="enablePinsCard">
+              <div class="card-body">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                  <div class="fw-semibold">Freigaben Motoren</div>
+                  <span class="badge bg-secondary">GPIO</span>
+                </div>
+
+                <div class="small text-muted mb-3">Einschalten Motoren können von Hand bewegt werden?</div>
+
+                <div class="row g-3">
+                  <div class="col-12 col-md-6">
+                    <div class="fw-semibold mb-2">Motor Links</div>
+                    <button class="btn btn-enable-off w-100" id="drvEnable27" type="button">
+                      Freigabe Motor Links
+                    </button>
+                  </div>
+
+                  <div class="col-12 col-md-6">
+                    <div class="fw-semibold mb-2">Motor Rechts</div>
+                    <button class="btn btn-enable-off w-100" id="drvEnable33" type="button">
+                      Freigabe Motor Rechts
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- SECTION: SPEED -->
+          <section class="tools-section mt-4" id="toolsSecSpeed">
+            <div class="section-title d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+              <div>
+                <div class="small text-uppercase text-muted fw-semibold">Tuning</div>
+                <h6 class="mb-0 fw-semibold">Geschwindigkeit</h6>
+              </div>
+              <span class="badge bg-secondary">Steps/s</span>
+            </div>
+
+            <div class="card glass-card p-3">
+              <div class="row g-3 align-items-end">
+                <div class="col-12 col-md-6">
+                  <label for="printSpeedInput" class="form-label mb-1">Geschwindigkeit Zeichnen</label>
+                  <div class="input-group">
+                    <input type="number" class="form-control" id="printSpeedInput" placeholder="1200" inputmode="numeric">
+                    <span class="input-group-text">Steps/s</span>
+                  </div>
+                </div>
+
+                <div class="col-12 col-md-6">
+                  <label for="moveSpeedInput" class="form-label mb-1">Geschwindigkeit Bewegung</label>
+                  <div class="input-group">
+                    <input type="number" class="form-control" id="moveSpeedInput" placeholder="2000" inputmode="numeric">
+                    <span class="input-group-text">Steps/s</span>
+                  </div>
+                </div>
+
+                <div class="col-12">
+                  <button class="w-100 btn btn-outline-primary" id="setSpeeds">Geschwindigkeiten speichern</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- SECTION: MOTION TUNING -->
+          <section class="tools-section mt-4" id="toolsSecMotion">
+            <div class="section-title d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+              <div>
+                <div class="small text-uppercase text-muted fw-semibold">Tuning</div>
+                <h6 class="mb-0 fw-semibold">Beschleunigung &amp; Jog</h6>
+              </div>
+              <span class="badge bg-secondary">Runtime</span>
+            </div>
+
+            <div class="small text-muted mb-3">Hohe Werte wirken brutal. Sinnvoll testen, nicht raten.</div>
+
+            <div class="card glass-card p-3">
+              <div class="row g-3 align-items-end">
+                <div class="col-12 col-md-6">
+                  <label for="accelerationInput" class="form-label mb-1">Beschleunigung</label>
+                  <input type="number" class="form-control" id="accelerationInput" placeholder="999999999" inputmode="numeric">
+                </div>
+
+                <div class="col-12 col-md-6">
+                  <label for="infiniteStepsInput" class="form-label mb-1">Jog Schritte (Pseudo-Unendlich)</label>
+                  <input type="number" class="form-control" id="infiniteStepsInput" placeholder="999999999" inputmode="numeric">
+                </div>
+
+                <div class="col-12">
+                  <button class="w-100 btn btn-outline-primary" id="setMotionTuning">Beschleunigung speichern</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- SECTION: FRONTEND PERFORMANCE -->
+          <section class="tools-section mt-4" id="toolsSecUiPerf">
+            <div class="section-title d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+              <div>
+                <div class="small text-uppercase text-muted fw-semibold">Frontend</div>
+                <h6 class="mb-0 fw-semibold">Performance</h6>
+              </div>
+              <span class="badge bg-secondary">UI</span>
+            </div>
+
+            <div class="small text-muted mb-3">Zu hoch = ruckeln/hängen. Zu niedrig = dauert länger, bleibt aber bedienbar.</div>
+
+            <div class="card glass-card p-3">
+              <div class="row g-3 align-items-end">
+                <div class="col-12 col-md-6">
+                  <label class="form-label mb-1">Parse Lines pro Tick</label>
+                  <input type="number" class="form-control" id="uiParseLinesTick" placeholder="300" inputmode="numeric">
+                  <div class="form-text">Kleiner = UI bleibt flüssig</div>
+                </div>
+
+                <div class="col-12 col-md-6">
+                  <label class="form-label mb-1">Draw Segmente pro Tick</label>
+                  <input type="number" class="form-control" id="uiDrawSegTick" placeholder="250" inputmode="numeric">
+                  <div class="form-text">Canvas-Last begrenzen</div>
+                </div>
+
+                <div class="col-12 col-md-6">
+                  <label class="form-label mb-1">Status Poll (ms)</label>
+                  <input type="number" class="form-control" id="uiStatusPollMs" placeholder="350" inputmode="numeric">
+                  <div class="form-text">Größer = weniger Netzwerk/DOM-Last</div>
+                </div>
+
+                <div class="col-12 col-md-6">
+                  <label class="form-label mb-1">Preview FPS</label>
+                  <input type="number" class="form-control" id="uiPreviewFps" placeholder="24" inputmode="numeric">
+                  <div class="form-text">24 reicht, 60 kostet CPU</div>
+                </div>
+
+                <div class="col-12 d-grid gap-2 d-md-flex">
+                  <button class="btn btn-outline-primary flex-fill" id="uiPerfSaveBtn" type="button">Speichern</button>
+                  <button class="btn btn-outline-secondary flex-fill" id="uiPerfResetBtn" type="button">Defaults</button>
+                </div>
+
+                <div class="col-12">
+                  <hr class="my-3">
+                  <div class="small text-muted mb-2">Aktuell gemessen (ms)</div>
+
+                  <div class="ui-perf-measured">
+                    <div><span>Parse (Commands)</span><b id="uiPerfMeasuredParse">—</b></div>
+                    <div><span>Plan (Preview)</span><b id="uiPerfMeasuredPlan">—</b></div>
+                    <div><span>Worker (Render)</span><b id="uiPerfMeasuredWorker">—</b></div>
+
+                    <div class="ui-perf-sep"></div>
+
+                    <div><span>FW Loop</span><b id="uiPerfMeasuredLoop">—</b></div>
+                    <div><span>FW Yield</span><b id="uiPerfMeasuredYield">—</b></div>
+                    <div><span>FW Move</span><b id="uiPerfMeasuredMove">—</b></div>
+                    <div><span>FW Runner</span><b id="uiPerfMeasuredRunner">—</b></div>
+                    <div><span>FW Phase</span><b id="uiPerfMeasuredPhase">—</b></div>
+                    <div><span>FW MaxLoop</span><b id="uiPerfMeasuredMax">—</b></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- SECTION: PEN SERVO -->
+          <section class="tools-section mt-4" id="toolsSecPenServo">
+            <div class="section-title d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+              <div>
+                <div class="small text-uppercase text-muted fw-semibold">Servo</div>
+                <h6 class="mb-0 fw-semibold">Stift-Servo</h6>
+              </div>
+              <span class="badge bg-secondary">Position</span>
+            </div>
+
+            <div class="small text-muted mb-3">Stift-Servo Grund- Arbeitsstellung.</div>
+
+            <div class="card glass-card p-3">
+              <div class="row g-2">
+                <div class="col-12 col-md-6">
+                  <button class="w-100 btn btn-primary" id="parkServoTool" aria-pressed="true">Grundstellung</button>
+                </div>
+                <div class="col-12 col-md-6">
+                  <button class="w-100 btn btn-outline-primary" id="homeServoTool" aria-pressed="false">Arbeitsstellung</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- SECTION: CALIBRATION -->
+          <section class="tools-section mt-4" id="toolsSecCalib">
+            <div class="section-title d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+              <div>
+                <div class="small text-uppercase text-muted fw-semibold">Service</div>
+                <h6 class="mb-0 fw-semibold">Kalibrierung</h6>
+              </div>
+              <span class="badge bg-secondary">1000 mm</span>
+            </div>
+
+            <div class="small text-muted mb-3">Führt eine definierte Strecke aus, um Steps/mm zu prüfen.</div>
+
+            <div class="card glass-card p-3">
+              <button class="w-100 btn btn-outline-secondary fw-semibold" id="estepsTool">1000 mm kalibrieren</button>
+            </div>
+          </section>
+
+        </div>
+      </div>
+
+      <div class="modal-footer tools-modal-footer">
+        <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Zurück</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+
+  <!-- HELP MODAL -->
+  <div class="modal fade" id="helpModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered modal-lg">
+
+        <div class="modal-content">
+
+          <div class="modal-header">
+            <h5 class="modal-title">Hilfe</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+
+            <div class="modal-body text-start">
+
+              <!-- FOLD: Intro -->
+              <button class="btn btn-outline-secondary btn-sm mb-2" type="button"
+                data-bs-toggle="collapse" data-bs-target="#helpFoldIntro"
+                aria-expanded="true" aria-controls="helpFoldIntro">
+                Abschnitt ein/aus
+              </button>
+              <div id="helpFoldIntro" class="collapse show">
+
+              <h5 class="mb-2">Mural Plotter: Bild malen in 7 Schritten</h5>
+              <p class="text-muted mb-3">
+                Diese Hilfe erklärt den Ablauf exakt so, wie die Weboberfläche dich durch die Phasen führt.
+                Unten findest du außerdem eine Live-Variablenliste direkt vom ESP32 (Diagnose).
+              </p>
+
+              <div class="alert alert-info mb-3" role="alert">
+                <b>Merksatz:</b> Erst Mechanik sauber, dann Software. Wenn die Wandaufhängung schief ist, wird auch dein Bild kreativ.
+              </div>
+
+              </div>
+              <!-- /FOLD: Intro -->
+
+              <!-- FOLD: Vorbereitung -->
+              <button class="btn btn-outline-secondary btn-sm mb-2" type="button"
+                data-bs-toggle="collapse" data-bs-target="#helpFoldPrep"
+                aria-expanded="true" aria-controls="helpFoldPrep">
+                Vorbereitung ein/aus
+              </button>
+              <div id="helpFoldPrep" class="collapse show">
+
+              <h6 class="mt-2">Vorbereitung (bevor du auf “Start” hämmerst)</h6>
+              <ol class="mb-3">
+                <li><b>Aufhängungspunkte messen:</b> Links und rechts auf gleicher Höhe, Abstand messen (mm).</li>
+                <li><b>Riemen/Bänder checken:</b> Nicht verdreht, nicht verklemmt, freier Lauf über Rollen/Spulen.</li>
+                <li><b>Stift montieren:</b> Marker/Kreide/Stift so befestigen, dass er nicht wackelt. (Wackeln = Wellenkunst.)</li>
+                <li><b>Stift-Spitze testen:</b> Auf Papier kurz testen: schreibt er leicht, ohne stark zu drücken?</li>
+                <li><b>Strom & WLAN:</b> ESP32 starten, dann im Browser <code>mural.local</code> öffnen.</li>
+              </ol>
+
+              </div>
+              <!-- /FOLD: Vorbereitung -->
+
+              <hr>
+
+              <!-- FOLD: Phasen -->
+              <button class="btn btn-outline-secondary btn-sm mb-2" type="button"
+                data-bs-toggle="collapse" data-bs-target="#helpFoldPhases"
+                aria-expanded="true" aria-controls="helpFoldPhases">
+                Phasen ein/aus
+              </button>
+              <div id="helpFoldPhases" class="collapse show">
+
+              <h5 class="mb-2">Phasen erklärt (so läuft ein Job ab)</h5>
+
+              <h6 class="mt-3">Phase 1: Referenzieren (RetractBelts)</h6>
+              <p>
+                Hier ziehst du beide Riemen ein, bis der Bot in einer definierten Ausgangslage ist.
+                Das ist dein “Nullpunkt” für den ganzen Ablauf.
+              </p>
+              <ul class="mb-2">
+                <li><b>Motor Links/Rechts</b> schalten: beide Riemen kontrolliert einziehen.</li>
+                <li>Wenn beide sauber eingezogen sind: <b>“Riemen sind eingezogen”</b>.</li>
+              </ul>
+              <div class="alert alert-warning" role="alert">
+                Wenn du hier schlampst, kannst du später jeden Wert “perfekt” einstellen und es wird trotzdem Mist. Physik gewinnt immer.
+              </div>
+
+              <h6 class="mt-4">Phase 2: Abstand eingeben (SetTopDistance)</h6>
+              <p>
+                <b>Top Distance</b> ist der Abstand zwischen den beiden Aufhängungspunkten (links bis rechts) in Millimetern.
+                Das ist der wichtigste Wert für die Kinematik.
+              </p>
+              <ul class="mb-2">
+                <li>Mit Maßband messen: Mittelpunkt links ↔ Mittelpunkt rechts.</li>
+                <li>Wert in mm eintragen, dann <b>Weiter</b>.</li>
+              </ul>
+              <div class="alert alert-danger" role="alert">
+                10 mm Fehler hier können sichtbar sein. Also bitte nicht “Pi mal Daumen”. Du bist doch kein Maurer.
+              </div>
+
+              <h6 class="mt-4">Phase 3: Grundstellung fahren (ExtendToHome)</h6>
+              <p>
+                Jetzt fährt der Bot in eine definierte <b>Home-Position</b> (sicherer Bereich, damit nicht direkt oben an der Kante gemalt wird).
+                Währenddessen kann die UI kurz warten.
+              </p>
+              <ul class="mb-2">
+                <li><b>Weiter</b> drücken, Bot fährt.</li>
+                <li>Wenn fertig: UI springt automatisch in die nächste Phase.</li>
+              </ul>
+
+              <h6 class="mt-4">Phase 4: Stift kalibrieren (PenCalibration)</h6>
+              <p>
+                Du stellst ein, wie weit der Stift runter darf.
+                Ziel: <b>gerade so</b> Kontakt, dass er schreibt, aber nicht drückt wie ein Presslufthammer.
+              </p>
+              <ul class="mb-2">
+                <li>Mit Slider bewegen und dabei beobachten: Stift hoch/runter.</li>
+                <li><b>Plus/Minus</b> für Feinjustage.</li>
+                <li>Wenn passt: <b>Weiter</b>.</li>
+              </ul>
+              <div class="alert alert-warning" role="alert">
+                Zu viel Druck = verschmieren, Motorlast, Step-Verluste, schlechte Linien. Zu wenig Druck = nichts zu sehen. Willkommen im Leben.
+              </div>
+
+              <h6 class="mt-4">Phase 5: SVG auswählen & positionieren (SvgSelect)</h6>
+              <p>
+                Du lädst eine SVG-Datei und richtest sie in der Vorschau aus.
+                Das ist dein letzter Moment, um zu verhindern, dass der Bot “aus dem Bild raus” malt.
+              </p>
+              <ul class="mb-2">
+                <li>SVG auswählen.</li>
+                <li>Mit D-Pad verschieben, mit Zoom rein/raus, Reset zum Zurücksetzen.</li>
+                <li>Dann <b>Weiter</b>.</li>
+              </ul>
+
+              <h6 class="mt-4">Phase 6: Rendering & Vorschau (ChooseRenderer + DrawingPreview)</h6>
+              <p>
+                Hier wird dein SVG in Fahrbefehle umgerechnet. Danach siehst du eine Vorschau und kannst Parameter anpassen.
+              </p>
+              <ul class="mb-2">
+                <li><b>Pfad-Nachverfolgung</b>: gut für Linien.</li>
+                <li><b>Vektor → Raster → Vektor</b>: behält Strichbreite besser, kann aber mehr “arbeiten”.</li>
+                <li><b>Füllungsdichte</b>: 0 = nur Linien, höher = mehr Füllung.</li>
+                <li><b>Flecken entfernen (turdSize)</b>: kleine Artefakte rausfiltern.</li>
+                <li>Wenn Vorschau passt: <b>Weiter</b> (Upload der Commands).</li>
+              </ul>
+
+              <h6 class="mt-4">Phase 7: Start malen (BeginDrawing + Drawing)</h6>
+              <p>
+                Jetzt wird gezeichnet. Die UI zeigt Live-Koordinaten und Fortschritt.
+              </p>
+              <ul class="mb-2">
+                <li><b>START MALEN</b> starten den Job.</li>
+                <li>Währenddessen siehst du Position und Fortschritt.</li>
+                <li><b>RESET</b> bricht ab und setzt den Ablauf zurück.</li>
+              </ul>
+
+              </div>
+              <!-- /FOLD: Phasen -->
+
+              <hr>
+
+              <!-- FOLD: Einstellungen -->
+              <button class="btn btn-outline-secondary btn-sm mb-2" type="button"
+                data-bs-toggle="collapse" data-bs-target="#helpFoldSettings"
+                aria-expanded="true" aria-controls="helpFoldSettings">
+                Einstellungen ein/aus
+              </button>
+              <div id="helpFoldSettings" class="collapse show">
+
+              <h5 class="mb-2">Einstellungen die wirklich was bringen</h5>
+              <p class="mb-2">
+                In <b>Einstellungen (Zahnrad)</b> kannst du Laufzeitwerte setzen (werden am ESP gespeichert).
+              </p>
+              <ul class="mb-3">
+                <li><b>Geschwindigkeit Malen</b> (<code>printSpeedSteps</code>): langsamer = schöner, schneller = riskanter.</li>
+                <li><b>Geschwindigkeit Bewegung</b> (<code>moveSpeedSteps</code>): schnellere Leerfahrten, aber nicht übertreiben.</li>
+                <li><b>Beschleunigung</b> (<code>acceleration</code>): zu hoch = Rattern/Stepverlust, moderat = sauber.</li>
+                <li><b>Jog Schritte</b> (<code>INFINITE_STEPS</code>): nur für manuelle Bewegung, kein “Performance-Tuning”.</li>
+              </ul>
+
+              <div class="alert alert-secondary mb-3" role="alert">
+                <b>Praxiswerte (Startpunkt, oft stabil):</b><br>
+                <code>printSpeedSteps</code> 1200–1600, <code>moveSpeedSteps</code> 2500–3500,
+                <code>acceleration</code> 1500–5000.<br>
+                Wenn du Step-Verluste hörst (knattern, springen): runter damit.
+              </div>
+
+              </div>
+              <!-- /FOLD: Einstellungen -->
+
+              <hr>
+
+              <!-- FOLD: Mehrfarbig -->
+              <button class="btn btn-outline-secondary btn-sm mb-2" type="button"
+                data-bs-toggle="collapse" data-bs-target="#helpFoldColor"
+                aria-expanded="true" aria-controls="helpFoldColor">
+                Mehrfarbig ein/aus
+              </button>
+              <div id="helpFoldColor" class="collapse show">
+
+              <h5 class="mb-2">Mehrfarbig malen</h5>
+              <p class="mb-3">
+                Wenn du den Mehrfarb-Modus nutzt, wird farbweise gezeichnet (Layer/Farben nacheinander).
+                Nach jeder Farbe pausiert das System und fordert dich zum Stiftwechsel auf.
+                (Der Link ist bei dir im Start-Screen als “FARBMODUS (mehrfarbig)”.)
+              </p>
+
+              </div>
+              <!-- /FOLD: Mehrfarbig -->
+
+              <hr>
+
+              <!-- FOLD: Troubleshooting -->
+              <button class="btn btn-outline-secondary btn-sm mb-2" type="button"
+                data-bs-toggle="collapse" data-bs-target="#helpFoldTrouble"
+                aria-expanded="true" aria-controls="helpFoldTrouble">
+                Troubleshooting ein/aus
+              </button>
+              <div id="helpFoldTrouble" class="collapse show">
+
+              <h5 class="mb-2">Troubleshooting (die üblichen menschlichen Klassiker)</h5>
+              <ul class="mb-3">
+                <li><b>Linien sind schief / Wellen:</b> Riemen locker, Stift wackelt, zu hohe Beschleunigung, mechanische Reibung.</li>
+                <li><b>Er malt versetzt:</b> Top Distance falsch, Referenzieren schlampig, Home-Position nicht stabil.</li>
+                <li><b>Er “knackt” oder verliert Schritte:</b> Speed/Acceleration zu hoch, Strom/Vref falsch, Mechanik klemmt.</li>
+                <li><b>Vorschau ok, Ergebnis falsch skaliert:</b> Geometrie-Parameter (Spule/StepsPerRotation) stimmen nicht.</li>
+              </ul>
+
+              </div>
+              <!-- /FOLD: Troubleshooting -->
+
+              <hr>
+
+              <!-- FOLD: Diagnose -->
+              <button class="btn btn-outline-secondary btn-sm mb-2" type="button"
+                data-bs-toggle="collapse" data-bs-target="#helpFoldDiag"
+                aria-expanded="true" aria-controls="helpFoldDiag">
+                Diagnose ein/aus
+              </button>
+              <div id="helpFoldDiag" class="collapse show">
+
+              <h5 class="mb-2">Live Diagnose: Variablen</h5>
+              <p class="small text-muted mb-2">
+              <code></code>
+              
+              </p>
+
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0" style="color: rgba(255,255,255,0.90);">
+                  <thead>
+                    <tr>
+                      <th style="width: 40%;">Variable</th>
+                      <th style="width: 20%;">Wert</th>
+                      <th style="width: 15%;">Einheit</th>
+                      <th style="width: 25%;">Beschreibung</th>
+                    </tr>
+                  </thead>
+                  <tbody id="helpDiagTable">
+                    <tr><td colspan="4" class="text-muted">–</td></tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="alert alert-dark mt-3 mb-0" role="alert">
+                <b>Pro-Tipp:</b> Einfach die ....  halten du ....!
+              </div>
+
+              </div>
+              <!-- /FOLD: Diagnose -->
+
+            </div>
+
+
+          <div class="modal-footer">
+            <button class="btn btn-primary" data-bs-dismiss="modal">Zurück</button>
+          </div>
+
+        </div>
+
+      </div>
+  </div>
+
+  <!-- SYSTEM MODAL -->
+  <div class="modal fade" id="systemModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content">
+
+        <div class="modal-header">
+          <h5 class="modal-title">System Informationen</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body system-grid">
+          <div class="sys-group"><h6>Firmware</h6><div id="sysFirmware">Lade…</div></div>
+          <div class="sys-group"><h6>Reset</h6><div id="sysReset">Lade…</div></div>
+          <div class="sys-group"><h6>Speicher</h6><div id="sysFs">Lade…</div></div>
+          <div class="sys-group"><h6>SD-Karte</h6><div id="sysSd">Lade…</div></div>
+          <div class="sys-group"><h6>RAM</h6><div id="sysRam">Lade…</div></div>
+          <div class="sys-group"><h6>Netzwerk</h6><div id="sysNet">Lade…</div></div>
+          <div class="sys-group"><h6>CPU / Board</h6><div id="sysCpu">Lade…</div></div>
+          <div class="sys-group"><h6>Status</h6><div id="sysState">Lade…</div></div>
+          <div class="sys-group"><h6>Warnstatus</h6><div id="sysWarn">Lade…</div></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline-danger" id="rebootBtn">Reboot</button>
+          <button class="btn btn-primary" data-bs-dismiss="modal">Zurück</button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- web log -->
+  <div id="logToggle">🧾</div>
+  <div id="logPanel" class="hidden" aria-hidden="true">
+    <div class="logHandle"></div>
+    <div class="logTopBar">
+      <div class="logTopSpacer"></div>
+      <div class="logTitle">Diagnose</div>
+      <button id="logDone" class="logDone" type="button">Zurück</button>
+    </div>
+    <div class="logControlsRow">
+      <!-- NOTICE -->
+      <label class="logLamp info" title="Notice (grün)">
+        <input type="checkbox" checked data-level="0">
+        <span class="lamp"></span>
+      </label>
+      <!-- WARN -->
+      <label class="logLamp warn" title="Warn (gelb)">
+        <input type="checkbox" checked data-level="1">
+        <span class="lamp"></span>
+      </label>
+
+      <!-- ERROR -->
+      <label class="logLamp error" title="Error (rot)">
+        <input type="checkbox" checked data-level="2">
+        <span class="lamp"></span>
+      </label>
+      <button class="logClear" onclick="clearLogs()" title="Clear">🗑️</button>
+    </div>
+    <div class="logSection">TODAY</div>
+    <div id="logList" class="logList"></div>
+  
+
+    </div>
+
+  <!-- FILE MANAGER MODAL -->
+
+
+
+
+      <!-- buttons -->
+        <div id="sideButtons" style="position:fixed; top:10px; right:10px; display:flex; flex-direction:column; gap:10px;">
+
+              <!-- gear -->
+              <div data-bs-toggle="modal" data-bs-target="#toolsModal" style="cursor:pointer;">
+                <i class="bi-gear fs-2"></i>
+              </div>
+
+              <!-- live hud toggle (unter dem Zahnrad) -->
+              <div id="hudToggleSide" style="cursor:pointer;" title="Live anzeigen/ausblenden">
+                <i class="bi-activity fs-2"></i>
+              </div>
+
+              <!-- file manager -->
+              <div data-bs-toggle="modal" data-bs-target="#fileManagerModal" style="cursor:pointer;" title="Dateimanager (LittleFS/SD)">
+                <i class="bi-folder2-open fs-2"></i>
+              </div>
+
+              <!-- system -->
+              <div data-bs-toggle="modal" data-bs-target="#systemModal" style="cursor:pointer;">
+                <i class="bi-cpu fs-2"></i>
+              </div>
+              <!-- help -->
+              <div data-bs-toggle="modal" data-bs-target="#helpModal" style="cursor:pointer;">
+                <i class="bi-question-circle fs-2"></i>
+              </div>
+              <!-- log/messages -->
+                  <div id="logToggleSide" style="cursor:pointer; position:relative;">
+                    <i class="bi-chat-left-text fs-2"></i>
+                    <span id="msgBadge" class="msgBadge hidden"></span>
+                  </div>
+          <div id="perfHud" class="perfHud"></div>
+        </div>
+
+
+
+        <!-- File Manager Modal -->
+        <div class="modal fade" id="fileManagerModal" tabindex="-1" aria-hidden="true">
+          <div class="modal-dialog modal-dialog-centered modal-xl">
+            <div class="modal-content fmModal">
+              <div class="modal-header">
+                <div class="d-flex align-items-center gap-2">
+                  <div class="toolBtn" style="width:44px;height:44px;border-radius:14px;">
+                    <i class="bi bi-folder2-open"></i>
+                  </div>
+                  <div>
+                    <div class="modal-title fw-bold">Dateimanager</div>
+                    <div class="small text-muted">LittleFS / SD • Details • Öffnen • Editor</div>
+                  </div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+              </div>
+
+              <div class="modal-body">
+
+                <!-- Toolbar -->
+                <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+                  <button class="btn btn-outline-light" id="fmVolLfs" type="button">LittleFS</button>
+                  <button class="btn btn-outline-light" id="fmVolSd" type="button">SD</button>
+
+                  <div class="vr mx-1"></div>
+
+                  <button class="btn btn-outline-light" id="fmUp" type="button" title="Hoch">
+                    <i class="bi bi-arrow-up"></i>
+                  </button>
+
+                  <button class="btn btn-outline-light" id="fmRefresh" type="button" title="Aktualisieren">
+                    <i class="bi bi-arrow-clockwise"></i>
+                  </button>
+
+                  <button class="btn btn-outline-light" id="fmMkdir" type="button" title="Neuer Ordner">
+                    <i class="bi bi-folder-plus"></i>
+                  </button>
+
+                  <button class="btn btn-outline-light" id="fmUploadBtn" type="button" title="Upload">
+                    <i class="bi bi-upload"></i>
+                  </button>
+                  <input id="fmUploadInput" type="file" style="display:none;">
+
+                  <button class="btn btn-outline-light" id="fmPaste" type="button" title="Einfügen">
+                    <i class="bi bi-clipboard-check"></i>
+                  </button>
+
+                  <div class="ms-auto small text-muted">
+                    Pfad: <span id="fmPath">/</span> • Clip: <span id="fmClip">—</span>
+                  </div>
+                </div>
+
+                <!-- File List -->
+                <div class="fmList" id="fmList"></div>
+
+                <!-- Preview / Editor -->
+                <div id="fmPreviewWrap" style="display:none; margin-top:14px;">
+                  <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div class="fw-semibold">Vorschau / Editor</div>
+                    <button class="btn btn-outline-light btn-sm" id="fmPreviewClose" type="button">Schließen</button>
+                  </div>
+
+                  <!-- Image Preview -->
+                  <img id="fmImgPrev"
+                      style="display:none; max-width:100%; border-radius:14px; border:1px solid rgba(255,255,255,0.12);" />
+
+                  <!-- Text Editor -->
+                  <textarea id="fmTextEditor" spellcheck="false"
+                    style="display:none; width:100%; height:38vh; background:rgba(0,0,0,0.35); color:rgba(255,255,255,0.92);
+                          border:1px solid rgba(255,255,255,0.12); border-radius:14px; padding:12px;
+                          font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;"></textarea>
+
+                  <!-- Editor Buttons -->
+                  <div class="mt-2 d-flex gap-2" id="fmEditorBar" style="display:none;">
+                    <button class="btn btn-outline-light" id="fmSaveBtn" type="button">Speichern</button>
+                    <button class="btn btn-outline-light" id="fmDownloadBtn" type="button">Download</button>
+                  </div>
+                </div>
+
+              </div>
+
+              <div class="modal-footer">
+                <button class="btn btn-warning" id="fmUseFolderForBatch" type="button" style="display:none;">
+                  Ordner für SVG-Serie nutzen
+                </button>
+                <button class="btn btn-secondary" data-bs-dismiss="modal" type="button">Schließen</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+
+
+  <!-- PAUSE MODAL -->
+  <div class="modal fade" id="pauseModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Pause</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body text-start">
+          <p class="mb-2">Job ist pausiert. Du kannst fortsetzen oder den Job sauber beenden (Stift hoch, Home).</p>
+          <div class="d-grid gap-2">
+            <button class="btn btn-success" id="resumeBtn" type="button">Weiter malen</button>
+            <button class="btn btn-outline-danger" id="stopBtnModal" type="button">Malen beenden</button>
+          </div>
+          <div class="small text-muted mt-2" id="pauseStateText">—</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+
+
+
+
+
+
+<script src="svgBatch.js"></script>
+
+</body>
+</html>
