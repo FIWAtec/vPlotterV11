@@ -1,10 +1,24 @@
 #ifndef MOVEMENT_H
 #define MOVEMENT_H
 
-#include <AccelStepper.h>
 #include <Arduino.h>
 #include <math.h>
 #include "display.h"
+
+// =====================
+// BUILD / HARDWARE MODE
+// =====================
+// 1 = MKS DLC32 V2.1 socket drivers (TMC2209) via I2S/bitstream
+// 0 = direct GPIO STEP/DIR wiring (external drivers)
+#ifndef USE_DLC32_I2S
+  #define USE_DLC32_I2S 1
+#endif
+
+#if !USE_DLC32_I2S
+  #include <AccelStepper.h>
+#else
+  #include "mks_dlc32_i2s.h"
+#endif
 
 extern int printSpeedSteps;
 extern int moveSpeedSteps;
@@ -16,7 +30,7 @@ constexpr int GT2_TEETH = 20;
 
 constexpr double LEGACY_DIAMETER_MM = 12.69;
 
-constexpr int stepsPerRotation = 200 * 32;
+constexpr int stepsPerRotation = 200 * 16;
 
 static inline double travelPerRotationMM() { return USE_GT2_PULLEY ? (GT2_TEETH * GT2_PITCH_MM) : (LEGACY_DIAMETER_MM * PI); }
 
@@ -132,8 +146,13 @@ class Movement {
     double X = -1;
     double Y = -1;
 
+  #if USE_DLC32_I2S
+    MksDlc32I2SStepper* leftMotor;
+    MksDlc32I2SStepper* rightMotor;
+  #else
     AccelStepper* leftMotor;
     AccelStepper* rightMotor;
+  #endif
     Display* display;
 
     void setOrigin();
