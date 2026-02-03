@@ -11,7 +11,6 @@
   const state = {
     batch: { active: false, index: 0, total: 0, currentName: "" },
     job: { totalDistanceMm: null, startDistMm: 0 },
-    area: { safeWidthMm: null, safeHeightMm: null },
     timing: { startedAt: null, lastRunTs: null, accumSec: 0 },
     last: { progress: null, running: false }
   };
@@ -102,10 +101,6 @@
             <div class="small text-muted">Gemalt / Rest</div>
             <div class="fw-semibold"><span id="dsDone">—</span> <span class="text-muted">/</span> <span id="dsLeft">—</span></div>
           </div>
-          <div style="grid-column:1 / -1;">
-            <div class="small text-muted">Malbereich (Safe)</div>
-            <div class="fw-semibold" id="dsArea">—</div>
-          </div>
         </div>
       `;
 
@@ -122,8 +117,7 @@
       speed: card.querySelector("#dsSpeed"),
       total: card.querySelector("#dsTotal"),
       done: card.querySelector("#dsDone"),
-      left: card.querySelector("#dsLeft"),
-      area: card.querySelector("#dsArea")
+      left: card.querySelector("#dsLeft")
     };
     return els;
   }
@@ -139,17 +133,6 @@
     ui.badge.textContent = isBatch ? `SVG-SERIE: ${state.batch.index + 1}/${state.batch.total}` : "NORMAL";
     ui.mode.textContent = `Modus: ${modeTxt}`;
     ui.name.textContent = nameTxt;
-
-    // Malbereich (Safe)
-    const aw = Number(state.area.safeWidthMm);
-    const ah = Number(state.area.safeHeightMm);
-    if (ui.area) {
-      if (Number.isFinite(aw) && aw > 0 && Number.isFinite(ah) && ah > 0) {
-        ui.area.textContent = `${Math.round(aw)} × ${Math.round(ah)} mm`;
-      } else {
-        ui.area.textContent = '—';
-      }
-    }
 
     const total = Number(state.job.totalDistanceMm);
     const startDist = Number(state.job.startDistMm) || 0;
@@ -238,11 +221,6 @@
   window.addEventListener("mural:telemetry", (e) => {
     const d = e?.detail || {};
     state.last.progress = d.progress;
-
-    const sw = Number(d.safeWidth);
-    const sh = Number(d.safeHeight);
-    if (Number.isFinite(sw) && sw > 0) state.area.safeWidthMm = sw;
-    if (Number.isFinite(sh) && sh > 0) state.area.safeHeightMm = sh;
 
     const now = Date.now();
     const running = !!d.running && !d.paused;

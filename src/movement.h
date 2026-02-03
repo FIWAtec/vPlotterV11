@@ -82,8 +82,7 @@ class Movement {
     bool isMoving();
     bool hasStartedHoming();
     double getWidth();
-    double getSafeHeight();
-    
+
     Point getCoordinatesLive();
     Point getCoordinates();
 

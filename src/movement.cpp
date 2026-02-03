@@ -300,16 +300,6 @@ double Movement::getWidth() {
     return width;
 }
 
-double Movement::getSafeHeight() {
-    if (topDistance == -1) {
-        throw std::invalid_argument("not ready");
-    }
-    // Symmetrisch zur Breite: topDistance minus Safe-Offset oben/unten
-    // minSafeY wird aus safeYFraction * topDistance berechnet
-    return (double)topDistance - 2.0 * (double)minSafeY;
-}
-
-
 Movement::Point Movement::getCoordinates() {
     if (X == -1 || Y == -1) {
         throw std::invalid_argument("not ready");

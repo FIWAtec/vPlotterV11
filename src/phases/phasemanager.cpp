@@ -58,14 +58,12 @@ void PhaseManager::setPhase(PhaseNames name) {
     }
 }
 
-
 void PhaseManager::respondWithState(AsyncWebServerRequest *request) {
     auto currentPhase = getCurrentPhase()->getName();
     auto moving = movement->isMoving();
 
     auto topDistance = movement->getTopDistance();
     auto safeWidth = topDistance != -1 ? movement->getWidth() : -1;
-    auto safeHeight = topDistance != -1 ? movement->getSafeHeight() : -1;
 
     AsyncResponseStream *response = request->beginResponseStream("application/json");
 
@@ -75,7 +73,6 @@ void PhaseManager::respondWithState(AsyncWebServerRequest *request) {
     doc["moving"] = moving;
     doc["topDistance"] = topDistance;
     doc["safeWidth"] = safeWidth;
-    doc["safeHeight"] = safeHeight;
 
     if (topDistance != -1) {
         auto homePosition = movement->getHomeCoordinates();
@@ -89,7 +86,6 @@ void PhaseManager::respondWithState(AsyncWebServerRequest *request) {
     serializeJson(doc, *response);
     request->send(response);
 }
-
 
 
 void PhaseManager::reset() {
