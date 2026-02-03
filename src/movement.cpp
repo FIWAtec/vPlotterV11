@@ -12,14 +12,10 @@ int moveSpeedSteps = 2000;
 Movement::Movement(Display* display) {
     this->display = display;
 
-  #if USE_DLC32_I2S
-    // DLC32 socket drivers via I2S bitstream
-    // Map left belt motor -> X socket (I2SO.1 step, I2SO.2 dir)
-    // Map right belt motor -> Y socket (I2SO.5 step, I2SO.6 dir)
     leftMotor = new MksDlc32I2SStepper(1, 2);
     leftMotor->setMaxSpeed(moveSpeedSteps);
     leftMotor->setAcceleration((float)accelerationSteps);
-    leftMotor->setPinsInverted(true);
+    leftMotor->setPinsInverted(false);
     leftMotor->setMinPulseWidth(_leftPulseWidthUs);
     leftMotor->enableOutputs();
 
@@ -28,21 +24,6 @@ Movement::Movement(Display* display) {
     rightMotor->setAcceleration((float)accelerationSteps);
     rightMotor->setMinPulseWidth(_rightPulseWidthUs);
     rightMotor->enableOutputs();
-  #else
-    // Direct GPIO STEP/DIR wiring (external drivers)
-    leftMotor = new AccelStepper(AccelStepper::DRIVER, LEFT_STEP_PIN, LEFT_DIR_PIN);
-    leftMotor->setMaxSpeed(moveSpeedSteps);
-    leftMotor->setAcceleration((float)accelerationSteps);
-    leftMotor->setPinsInverted(true);
-    leftMotor->setMinPulseWidth(_leftPulseWidthUs);
-    leftMotor->enableOutputs();
-
-    rightMotor = new AccelStepper(AccelStepper::DRIVER, RIGHT_STEP_PIN, RIGHT_DIR_PIN);
-    rightMotor->setMaxSpeed(moveSpeedSteps);
-    rightMotor->setAcceleration((float)accelerationSteps);
-    rightMotor->setMinPulseWidth(_rightPulseWidthUs);
-    rightMotor->enableOutputs();
-  #endif
 
     topDistance = -1;
 
@@ -81,13 +62,14 @@ void Movement::setOrigin() {
     homed = true;
 }
 
+
 void Movement::leftStepper(const int dir) {
     if (dir > 0) {
         leftMotor->move(infiniteStepsSteps);
-        leftMotor->setSpeed(printSpeedSteps);
+        leftMotor->setSpeed(+printSpeedSteps);
     } else if (dir < 0) {
         leftMotor->move(-infiniteStepsSteps);
-        leftMotor->setSpeed(printSpeedSteps);
+        leftMotor->setSpeed(-printSpeedSteps);
     } else {
         leftMotor->setAcceleration((float)accelerationSteps);
         leftMotor->stop();
@@ -95,20 +77,24 @@ void Movement::leftStepper(const int dir) {
     moving = true;
 }
 
+
+
+
 void Movement::rightStepper(const int dir) {
     if (dir > 0) {
         rightMotor->move(infiniteStepsSteps);
-        rightMotor->setSpeed(printSpeedSteps);
+        rightMotor->setSpeed(+printSpeedSteps);
     } else if (dir < 0) {
         rightMotor->move(-infiniteStepsSteps);
-        rightMotor->setSpeed(printSpeedSteps);
+        rightMotor->setSpeed(-printSpeedSteps);
     } else {
         rightMotor->setAcceleration((float)accelerationSteps);
-    rightMotor->setMinPulseWidth(_rightPulseWidthUs);
         rightMotor->stop();
     }
     moving = true;
 }
+
+
 
 Movement::Point Movement::getHomeCoordinates() {
     if (topDistance == -1) {
