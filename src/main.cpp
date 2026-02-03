@@ -916,44 +916,62 @@ void setup()
 
   server.on("/getState", HTTP_GET, [](AsyncWebServerRequest *request) { handleGetState(request); });
 
-server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
-  StaticJsonDocument<1536> doc;
 
-  auto p = movement ? movement->getCoordinatesLive() : Movement::Point();
-  doc["x"] = (double)p.x;
-  doc["y"] = (double)p.y;
+  server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+    StaticJsonDocument<1536> doc;
 
-  const int prog = runner ? runner->getProgress() : 0;
-  const bool running = runner ? !runner->isStopped() : false;
-  const bool paused  = runner ? runner->isPaused()   : false;
+    auto p = movement ? movement->getCoordinatesLive() : Movement::Point();
+    doc["x"] = (double)p.x;
+    doc["y"] = (double)p.y;
 
-  doc["progress"] = prog;
-  doc["running"]  = running;
-  doc["paused"]   = paused;
+    const int prog = runner ? runner->getProgress() : 0;
+    const bool running = runner ? !runner->isStopped() : false;
+    const bool paused  = runner ? runner->isPaused()   : false;
 
-  doc["phaseName"]   = (phaseManager && phaseManager->getCurrentPhase()) ? phaseManager->getCurrentPhase()->getName() : "—";
-  doc["printSteps"]  = (int)printSpeedSteps;
+    doc["progress"] = prog;
+    doc["running"]  = running;
+    doc["paused"]   = paused;
 
-  doc["fwMaxLoopMs"] = (double)gPerf.max_loop_us / 1000.0;
+    doc["phaseName"]   = (phaseManager && phaseManager->getCurrentPhase()) ? phaseManager->getCurrentPhase()->getName() : "—";
 
-  JsonObject penObj = doc.createNestedObject("pen");
-  penObj["pos"]   = (pen && pen->isDown()) ? "DOWN" : "UP";
-  penObj["angle"] = pen ? pen->currentAngle() : 0;
+    // Arbeitsbereich (Safe-Zone)
+    const int topDist = movement ? movement->getTopDistance() : -1;
+    doc["topDistance"] = topDist;
 
-  penObj["state"] = penObj["pos"];
+    double safeW = -1;
+    double safeH = -1;
+    if (movement && topDist != -1) {
+      try { safeW = movement->getWidth(); } catch (...) { safeW = -1; }
+      try { safeH = movement->getSafeHeight(); } catch (...) { safeH = -1; }
+    }
+    doc["safeWidth"]  = safeW;
+    doc["safeHeight"] = safeH;
 
-  JsonObject perf = doc.createNestedObject("perf");
-  perf["loop_ms"]     = (double)gPerf.loop_us_avg / 1000.0;
-  perf["yield_ms"]    = (double)gPerf.yield_us_avg / 1000.0;
-  perf["move_ms"]     = (double)gPerf.move_us_avg / 1000.0;
-  perf["runner_ms"]   = (double)gPerf.runner_us_avg / 1000.0;
-  perf["phase_ms"]    = (double)gPerf.phase_us_avg / 1000.0;
-  perf["max_loop_ms"] = (double)gPerf.max_loop_us / 1000.0;
+    doc["printSteps"]  = (int)printSpeedSteps;
 
-  String out;
-  serializeJson(doc, out);
-  request->send(200, "application/json; charset=utf-8", out);
-});
+    doc["fwMaxLoopMs"] = (double)gPerf.max_loop_us / 1000.0;
+
+    JsonObject penObj = doc.createNestedObject("pen");
+    penObj["pos"]   = (pen && pen->isDown()) ? "DOWN" : "UP";
+    penObj["angle"] = pen ? pen->currentAngle() : 0;
+
+    penObj["state"] = penObj["pos"];
+
+    JsonObject perf = doc.createNestedObject("perf");
+    perf["loop_ms"]     = (double)gPerf.loop_us_avg / 1000.0;
+    perf["yield_ms"]    = (double)gPerf.yield_us_avg / 1000.0;
+    perf["move_ms"]     = (double)gPerf.move_us_avg / 1000.0;
+    perf["runner_ms"]   = (double)gPerf.runner_us_avg / 1000.0;
+    perf["phase_ms"]    = (double)gPerf.phase_us_avg / 1000.0;
+    perf["max_loop_ms"] = (double)gPerf.max_loop_us / 1000.0;
+
+    String out;
+    serializeJson(doc, out);
+    request->send(200, "application/json; charset=utf-8", out);
+  });
+
+
+
 
   server.on("/pauseJob", HTTP_POST, [](AsyncWebServerRequest *request){
     if (runner) runner->pauseJob();
