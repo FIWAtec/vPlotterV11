@@ -282,16 +282,16 @@ static void ensureWifiOrAp()
 
   wifiManager.setConfigPortalTimeout(180);
 
-  const bool ok = wifiManager.autoConnect("MANIAC");
+  const bool ok = wifiManager.autoConnect("Mural");
 
   if (ok && WiFi.status() == WL_CONNECTED) {
     WebLog::info(String("WiFi connected, IP=") + WiFi.localIP().toString());
     return;
   }
 
-  WebLog::warn("WiFi not connected -> starting AP 'MANIAC'");
+  WebLog::warn("WiFi not connected -> starting AP 'Mural'");
   WiFi.mode(WIFI_AP);
-  WiFi.softAP("MANIAC");
+  WiFi.softAP("Mural");
   delay(100);
   WebLog::info(String("AP started, AP_IP=") + WiFi.softAPIP().toString());
 }
@@ -349,9 +349,7 @@ static void registerPulseWidthEndpoints(AsyncWebServer* server)
     prefs.putInt(PREF_KEY_PULSE_L, l);
     prefs.putInt(PREF_KEY_PULSE_R, r);
 
-    if (movement) movement->setPulseWidths(l, r);
-
-    WebLog::info(String("Pulse widths saved+applied: left=") + l + "us right=" + r + "us");
+    WebLog::info(String("Pulse widths saved: left=") + l + "us right=" + r + "us");
 
     StaticJsonDocument<128> doc;
     doc["ok"] = true;
@@ -872,7 +870,7 @@ void setup()
   display = new Display();
   movement = new Movement(display);
 
-  prefs.begin("maniac", false);
+  prefs.begin("mural", false);
 
   int storedPulseL = prefs.getInt(PREF_KEY_PULSE_L, 2);
   int storedPulseR = prefs.getInt(PREF_KEY_PULSE_R, 2);
@@ -893,8 +891,8 @@ void setup()
 
   ensureWifiOrAp();
 
-  if (!MDNS.begin("maniac")) WebLog::warn("mDNS start failed");
-  else WebLog::info("mDNS started: maniac.local");
+  if (!MDNS.begin("mural")) WebLog::warn("mDNS start failed");
+  else WebLog::info("mDNS started: mural.local");
 
 #if defined(ESP32)
   setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1);
@@ -1060,7 +1058,7 @@ server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
     const int rssi = WiFi.isConnected() ? WiFi.RSSI() : -127;
     const String ip = WiFi.isConnected() ? WiFi.localIP().toString() : String("0.0.0.0");
     const char* host = WiFi.getHostname();
-    const String hostname = host ? String(host) : String("maniac");
+    const String hostname = host ? String(host) : String("mural");
 
     const int cpuMhz = getCpuFrequencyMhz();
     const String board = String("ESP32");
@@ -1147,7 +1145,7 @@ server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
   display->displayHomeScreen(
     String("http://") + (staOk ? staIp : apIp),
     "or",
-    "http://maniac.local"
+    "http://mural.local"
   );
 
   WebLog::info(String("Webserver started: ") + (staOk ? staIp : apIp));

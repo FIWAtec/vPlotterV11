@@ -12,18 +12,20 @@ int moveSpeedSteps = 2000;
 Movement::Movement(Display* display) {
     this->display = display;
 
-    leftMotor = new MksDlc32I2SStepper(1, 2);
+    leftMotor = new AccelStepper(AccelStepper::DRIVER, LEFT_STEP_PIN, LEFT_DIR_PIN);
     leftMotor->setMaxSpeed(moveSpeedSteps);
     leftMotor->setAcceleration((float)accelerationSteps);
-    leftMotor->setPinsInverted(false);
+    leftMotor->setPinsInverted(true);
     leftMotor->setMinPulseWidth(_leftPulseWidthUs);
-    leftMotor->enableOutputs();
+    leftMotor->disableOutputs();
 
-    rightMotor = new MksDlc32I2SStepper(5, 6);
+    rightMotor = new AccelStepper(AccelStepper::DRIVER, RIGHT_STEP_PIN, RIGHT_DIR_PIN);
+    rightMotor->setPinsInverted(true, false, false);
     rightMotor->setMaxSpeed(moveSpeedSteps);
     rightMotor->setAcceleration((float)accelerationSteps);
     rightMotor->setMinPulseWidth(_rightPulseWidthUs);
-    rightMotor->enableOutputs();
+    rightMotor->disableOutputs();
+
 
     topDistance = -1;
 
@@ -62,14 +64,13 @@ void Movement::setOrigin() {
     homed = true;
 }
 
-
 void Movement::leftStepper(const int dir) {
     if (dir > 0) {
         leftMotor->move(infiniteStepsSteps);
-        leftMotor->setSpeed(+printSpeedSteps);
+        leftMotor->setSpeed(printSpeedSteps);
     } else if (dir < 0) {
         leftMotor->move(-infiniteStepsSteps);
-        leftMotor->setSpeed(-printSpeedSteps);
+        leftMotor->setSpeed(printSpeedSteps);
     } else {
         leftMotor->setAcceleration((float)accelerationSteps);
         leftMotor->stop();
@@ -77,24 +78,20 @@ void Movement::leftStepper(const int dir) {
     moving = true;
 }
 
-
-
-
 void Movement::rightStepper(const int dir) {
     if (dir > 0) {
         rightMotor->move(infiniteStepsSteps);
-        rightMotor->setSpeed(+printSpeedSteps);
+        rightMotor->setSpeed(printSpeedSteps);
     } else if (dir < 0) {
         rightMotor->move(-infiniteStepsSteps);
-        rightMotor->setSpeed(-printSpeedSteps);
+        rightMotor->setSpeed(printSpeedSteps);
     } else {
         rightMotor->setAcceleration((float)accelerationSteps);
+    rightMotor->setMinPulseWidth(_rightPulseWidthUs);
         rightMotor->stop();
     }
     moving = true;
 }
-
-
 
 Movement::Point Movement::getHomeCoordinates() {
     if (topDistance == -1) {
@@ -348,7 +345,8 @@ void Movement::extend1000mm() {
 }
 
 void Movement::disableMotors() {
-    // Intentionally empty: drivers must stay enabled all the time.
+    if (leftMotor) leftMotor->disableOutputs();
+    if (rightMotor) rightMotor->disableOutputs();
 }
 
 bool Movement::isMoving() { return moving; }
@@ -379,13 +377,8 @@ void Movement::setEnablePins(int leftEnablePin, int rightEnablePin) {
   _leftEnablePin = leftEnablePin;
   _rightEnablePin = rightEnablePin;
 
-#if USE_DLC32_I2S
-  (void)_leftEnablePin;
-  (void)_rightEnablePin;
-#else
   if (leftMotor)  leftMotor->setEnablePin(_leftEnablePin);
   if (rightMotor) rightMotor->setEnablePin(_rightEnablePin);
-#endif
 }
 
 int Movement::getLeftEnablePin() const {
@@ -397,14 +390,10 @@ int Movement::getRightEnablePin() const {
 }
 
 void Movement::setPulseWidths(int leftUs, int rightUs) {
-    if (leftUs < 1) leftUs = 1;
-    if (rightUs < 1) rightUs = 1;
-    if (leftUs > 2000) leftUs = 2000;
-    if (rightUs > 2000) rightUs = 2000;
-
-    _leftPulseWidthUs  = leftUs;
-    _rightPulseWidthUs = rightUs;
-
+    (void)leftUs;
+    (void)rightUs;
+    _leftPulseWidthUs  = FIXED_PULSE_US;
+    _rightPulseWidthUs = FIXED_PULSE_US;
     if (leftMotor)  leftMotor->setMinPulseWidth((unsigned int)_leftPulseWidthUs);
     if (rightMotor) rightMotor->setMinPulseWidth((unsigned int)_rightPulseWidthUs);
 }
