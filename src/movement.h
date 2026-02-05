@@ -51,6 +51,41 @@ constexpr int RIGHT_DIR_PIN = 25;
 class Movement {
    public:
 
+    struct PlannerConfig {
+        // Cornering and lookahead related knobs
+        double junctionDeviationMM;   // 0.01 .. 1.0 typical
+        int lookaheadSegments;        // 1 .. 128
+        int minSegmentTimeMs;         // 0 .. 50
+        double cornerSlowdown;        // 0..1 , lower => stronger corner slow-down
+        double minCornerFactor;       // minimal speed factor in very sharp corners
+
+        // Geometry based dynamic feed and filters
+        double minSegmentLenMM;       // tiny segments can be skipped/merged by runner
+        double collinearDeg;          // merge threshold in degrees
+
+        // Backlash compensation in mm
+        double backlashXmm;
+        double backlashYmm;
+
+        // S-curve style soften factor (0..1), practical approximation on top of AccelStepper
+        double sCurveFactor;
+
+        PlannerConfig() :
+            junctionDeviationMM(0.08),
+            lookaheadSegments(48),
+            minSegmentTimeMs(3),
+            cornerSlowdown(0.55),
+            minCornerFactor(0.30),
+            minSegmentLenMM(0.20),
+            collinearDeg(3.0),
+            backlashXmm(0.0),
+            backlashYmm(0.0),
+            sCurveFactor(0.35) {}
+    };
+
+    void setPlannerConfig(const PlannerConfig& cfg);
+    PlannerConfig getPlannerConfig() const;
+
     void setEnablePins(int leftEnablePin, int rightEnablePin);
     int  getLeftEnablePin() const;
     int  getRightEnablePin() const;
@@ -110,9 +145,12 @@ class Movement {
 
     int _leftEnablePin  = -1;
     int _rightEnablePin = -1;
-    
+
     int _leftPulseWidthUs  = FIXED_PULSE_US;
     int _rightPulseWidthUs = FIXED_PULSE_US;
+
+    PlannerConfig plannerCfg{};
+
     struct Lengths {
         int left;
         int right;
@@ -131,6 +169,12 @@ class Movement {
 
     double X = -1;
     double Y = -1;
+
+    // for cornering/backlash
+    double lastSegmentDX = 0.0;
+    double lastSegmentDY = 0.0;
+    int lastDirX = 0;
+    int lastDirY = 0;
 
     AccelStepper* leftMotor;
     AccelStepper* rightMotor;
@@ -151,6 +195,8 @@ class Movement {
     void getBeltForces(double phi_L, double phi_R, double& F_L, double& F_R) const;
     double solveTorqueEquilibrium(double phi_L, double phi_R, double F_L, double F_R, double gamma_start) const;
     double getDilationCorrectedBeltLength(double belt_length_mm, double F_belt) const;
+
+    double computeCornerFactor(double dx, double dy) const;
 };
 
 #endif

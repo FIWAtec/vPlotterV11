@@ -2,6 +2,7 @@
 #define Runner_h
 
 #include <cstddef>
+#include <deque>
 #include <LittleFS.h>
 
 #include "movement.h"
@@ -11,12 +12,23 @@
 
 class Runner {
 private:
+    struct QueuedCommand {
+        enum Type { Pen, Move } type;
+        bool penDown; // only for Pen
+        Movement::Point p; // only for Move
+        QueuedCommand(bool down) : type(Pen), penDown(down), p(0,0) {}
+        QueuedCommand(Movement::Point pt) : type(Move), penDown(false), p(pt) {}
+    };
+
     Movement *movement;
     Pen *pen;
     Display *display;
 
     void initTaskProvider();
     Task* getNextTask();
+
+    bool fillLookaheadQueue();
+    void optimizeLookaheadQueue();
 
     Task* currentTask = nullptr;
     bool currentTaskCountsDistance = false;
@@ -48,6 +60,9 @@ private:
     int progress = 0;
 
     volatile bool abortRequested = false;
+
+    std::deque<QueuedCommand> lookaheadQ;
+    bool eofReached = false;
 
 public:
     Runner(Movement *movement, Pen *pen, Display *display);

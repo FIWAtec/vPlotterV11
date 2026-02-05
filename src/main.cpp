@@ -67,6 +67,18 @@ constexpr const char* PREF_KEY_PULSE_L = "pulseLeftUs";
 constexpr const char* PREF_KEY_PULSE_R = "pulseRightUs";
 constexpr const char* PREF_KEY_PEN_DOWN = "penDown";
 constexpr const char* PREF_KEY_PEN_UP   = "penUp";
+// Planner / quality tuning preference keys
+// Keep keys short (Preferences/NVS key length limit)
+constexpr const char* PREF_KEY_JUNC_DEV   = "jdev";
+constexpr const char* PREF_KEY_LOOKAHEAD  = "lookahd";
+constexpr const char* PREF_KEY_MINSEGMS   = "minsegms";
+constexpr const char* PREF_KEY_CORNERSLOW = "cornslow";
+constexpr const char* PREF_KEY_MINCORNER  = "mincorn";
+constexpr const char* PREF_KEY_MINSEGLEN  = "minsegln";
+constexpr const char* PREF_KEY_COLLINEAR  = "colinr";
+constexpr const char* PREF_KEY_BACKLASHX  = "backlx";
+constexpr const char* PREF_KEY_BACKLASHY  = "backly";
+constexpr const char* PREF_KEY_SCURVE     = "scurve";
 
 // Perf stats
 struct PerfStats {
@@ -892,6 +904,22 @@ void setup()
 
   WebLog::log(LOG_INFO, "Loaded tuning: infSteps=" + String(storedInfSteps) + " accel=" + String(storedAccel));
   WebLog::log(LOG_INFO, "Loaded speeds: print=" + String(storedPrint) + " move=" + String(storedMove));
+  Movement::PlannerConfig cfg = movement->getPlannerConfig();
+  cfg.junctionDeviationMM = prefs.getDouble(PREF_KEY_JUNC_DEV, cfg.junctionDeviationMM);
+  cfg.lookaheadSegments   = prefs.getInt(PREF_KEY_LOOKAHEAD, cfg.lookaheadSegments);
+  cfg.minSegmentTimeMs    = prefs.getInt(PREF_KEY_MINSEGMS, cfg.minSegmentTimeMs);
+  cfg.cornerSlowdown      = prefs.getDouble(PREF_KEY_CORNERSLOW, cfg.cornerSlowdown);
+  cfg.minCornerFactor     = prefs.getDouble(PREF_KEY_MINCORNER, cfg.minCornerFactor);
+  cfg.minSegmentLenMM     = prefs.getDouble(PREF_KEY_MINSEGLEN, cfg.minSegmentLenMM);
+  cfg.collinearDeg        = prefs.getDouble(PREF_KEY_COLLINEAR, cfg.collinearDeg);
+  cfg.backlashXmm         = prefs.getDouble(PREF_KEY_BACKLASHX, cfg.backlashXmm);
+  cfg.backlashYmm         = prefs.getDouble(PREF_KEY_BACKLASHY, cfg.backlashYmm);
+  cfg.sCurveFactor        = prefs.getDouble(PREF_KEY_SCURVE, cfg.sCurveFactor);
+  movement->setPlannerConfig(cfg);
+  WebLog::log(LOG_INFO, "Loaded planner: jd=" + String(cfg.junctionDeviationMM, 4) +
+    " lookahead=" + String(cfg.lookaheadSegments) +
+    " minSegMs=" + String(cfg.minSegmentTimeMs));
+
 
   ensureWifiOrAp();
 
@@ -963,6 +991,19 @@ server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
   perf["runner_ms"]   = (double)gPerf.runner_us_avg / 1000.0;
   perf["phase_ms"]    = (double)gPerf.phase_us_avg / 1000.0;
   perf["max_loop_ms"] = (double)gPerf.max_loop_us / 1000.0;
+    JsonObject plannerObj = doc["planner"].to<JsonObject>();
+    auto pcfg = movement ? movement->getPlannerConfig() : Movement::PlannerConfig();
+    plannerObj["junctionDeviation"] = pcfg.junctionDeviationMM;
+    plannerObj["lookaheadSegments"] = pcfg.lookaheadSegments;
+    plannerObj["minSegmentTimeMs"] = pcfg.minSegmentTimeMs;
+    plannerObj["cornerSlowdown"] = pcfg.cornerSlowdown;
+    plannerObj["minCornerFactor"] = pcfg.minCornerFactor;
+    plannerObj["minSegmentLenMM"] = pcfg.minSegmentLenMM;
+    plannerObj["collinearDeg"] = pcfg.collinearDeg;
+    plannerObj["backlashXmm"] = pcfg.backlashXmm;
+    plannerObj["backlashYmm"] = pcfg.backlashYmm;
+    plannerObj["sCurveFactor"] = pcfg.sCurveFactor;
+
 
   String out;
   serializeJson(doc, out);
@@ -1057,6 +1098,37 @@ server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
     WebLog::info(String("Tuning updated & saved: infSteps=") + t.infiniteSteps + " accel=" + t.acceleration);
     request->send(200, "text/plain", "OK");
   });
+
+  server.on("/setPlannerConfig", HTTP_POST, [](AsyncWebServerRequest* request){
+    auto cfg = movement->getPlannerConfig();
+
+    if (request->hasParam("junctionDeviation", true)) cfg.junctionDeviationMM = request->getParam("junctionDeviation", true)->value().toDouble();
+    if (request->hasParam("lookaheadSegments", true)) cfg.lookaheadSegments = request->getParam("lookaheadSegments", true)->value().toInt();
+    if (request->hasParam("minSegmentTimeMs", true)) cfg.minSegmentTimeMs = request->getParam("minSegmentTimeMs", true)->value().toInt();
+    if (request->hasParam("cornerSlowdown", true)) cfg.cornerSlowdown = request->getParam("cornerSlowdown", true)->value().toDouble();
+    if (request->hasParam("minCornerFactor", true)) cfg.minCornerFactor = request->getParam("minCornerFactor", true)->value().toDouble();
+    if (request->hasParam("minSegmentLenMM", true)) cfg.minSegmentLenMM = request->getParam("minSegmentLenMM", true)->value().toDouble();
+    if (request->hasParam("collinearDeg", true)) cfg.collinearDeg = request->getParam("collinearDeg", true)->value().toDouble();
+    if (request->hasParam("backlashXmm", true)) cfg.backlashXmm = request->getParam("backlashXmm", true)->value().toDouble();
+    if (request->hasParam("backlashYmm", true)) cfg.backlashYmm = request->getParam("backlashYmm", true)->value().toDouble();
+    if (request->hasParam("sCurveFactor", true)) cfg.sCurveFactor = request->getParam("sCurveFactor", true)->value().toDouble();
+
+    movement->setPlannerConfig(cfg);
+
+    prefs.putDouble(PREF_KEY_JUNC_DEV, cfg.junctionDeviationMM);
+    prefs.putInt(PREF_KEY_LOOKAHEAD, cfg.lookaheadSegments);
+    prefs.putInt(PREF_KEY_MINSEGMS, cfg.minSegmentTimeMs);
+    prefs.putDouble(PREF_KEY_CORNERSLOW, cfg.cornerSlowdown);
+    prefs.putDouble(PREF_KEY_MINCORNER, cfg.minCornerFactor);
+    prefs.putDouble(PREF_KEY_MINSEGLEN, cfg.minSegmentLenMM);
+    prefs.putDouble(PREF_KEY_COLLINEAR, cfg.collinearDeg);
+    prefs.putDouble(PREF_KEY_BACKLASHX, cfg.backlashXmm);
+    prefs.putDouble(PREF_KEY_BACKLASHY, cfg.backlashYmm);
+    prefs.putDouble(PREF_KEY_SCURVE, cfg.sCurveFactor);
+
+    request->send(200, "text/plain", "OK");
+  });
+
 
   server.on("/sysinfo", HTTP_GET, [](AsyncWebServerRequest *req) {
     const size_t total = LittleFS.totalBytes();

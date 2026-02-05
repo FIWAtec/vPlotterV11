@@ -1,6 +1,6 @@
 #include <math.h>
-
 #include <stdexcept>
+#include <algorithm>
 
 #include "display.h"
 #include "movement.h"
@@ -26,12 +26,34 @@ Movement::Movement(Display* display) {
     rightMotor->setMinPulseWidth(_rightPulseWidthUs);
     rightMotor->disableOutputs();
 
-
     topDistance = -1;
-
     moving = false;
     homed = false;
     startedHoming = false;
+}
+
+void Movement::setPlannerConfig(const PlannerConfig& cfg) {
+    plannerCfg = cfg;
+
+    if (plannerCfg.junctionDeviationMM < 0.001) plannerCfg.junctionDeviationMM = 0.001;
+    if (plannerCfg.junctionDeviationMM > 2.0) plannerCfg.junctionDeviationMM = 2.0;
+    if (plannerCfg.lookaheadSegments < 1) plannerCfg.lookaheadSegments = 1;
+    if (plannerCfg.lookaheadSegments > 128) plannerCfg.lookaheadSegments = 128;
+    if (plannerCfg.minSegmentTimeMs < 0) plannerCfg.minSegmentTimeMs = 0;
+    if (plannerCfg.minSegmentTimeMs > 100) plannerCfg.minSegmentTimeMs = 100;
+    if (plannerCfg.cornerSlowdown < 0.05) plannerCfg.cornerSlowdown = 0.05;
+    if (plannerCfg.cornerSlowdown > 1.0) plannerCfg.cornerSlowdown = 1.0;
+    if (plannerCfg.minCornerFactor < 0.05) plannerCfg.minCornerFactor = 0.05;
+    if (plannerCfg.minCornerFactor > 1.0) plannerCfg.minCornerFactor = 1.0;
+    if (plannerCfg.sCurveFactor < 0.0) plannerCfg.sCurveFactor = 0.0;
+    if (plannerCfg.sCurveFactor > 1.0) plannerCfg.sCurveFactor = 1.0;
+    if (plannerCfg.minSegmentLenMM < 0.0) plannerCfg.minSegmentLenMM = 0.0;
+    if (plannerCfg.collinearDeg < 0.1) plannerCfg.collinearDeg = 0.1;
+    if (plannerCfg.collinearDeg > 20.0) plannerCfg.collinearDeg = 20.0;
+}
+
+Movement::PlannerConfig Movement::getPlannerConfig() const {
+    return plannerCfg;
 }
 
 void Movement::setTopDistance(const int distance) {
@@ -49,6 +71,10 @@ void Movement::resumeTopDistance(int distance) {
     const Point homeCoordinates = getHomeCoordinates();
     X = homeCoordinates.x;
     Y = homeCoordinates.y;
+    lastSegmentDX = 0.0;
+    lastSegmentDY = 0.0;
+    lastDirX = 0;
+    lastDirY = 0;
 
     const Lengths lengths = getBeltLengths(homeCoordinates.x, homeCoordinates.y);
     leftMotor->setCurrentPosition(lengths.left);
@@ -87,7 +113,7 @@ void Movement::rightStepper(const int dir) {
         rightMotor->setSpeed(printSpeedSteps);
     } else {
         rightMotor->setAcceleration((float)accelerationSteps);
-    rightMotor->setMinPulseWidth(_rightPulseWidthUs);
+        rightMotor->setMinPulseWidth(_rightPulseWidthUs);
         rightMotor->stop();
     }
     moving = true;
@@ -102,10 +128,8 @@ Movement::Point Movement::getHomeCoordinates() {
 
 int Movement::extendToHome() {
     setOrigin();
-
     auto homeCoordinates = getHomeCoordinates();
     startedHoming = true;
-
     auto moveTime = beginLinearTravel(homeCoordinates.x, homeCoordinates.y, moveSpeedSteps);
     return int(ceil(moveTime));
 }
@@ -186,7 +210,6 @@ double Movement::solveTorqueEquilibrium(const double phi_L, const double phi_R, 
             return gamma_best;
         }
     }
-
     return gamma_best;
 }
 
@@ -231,52 +254,83 @@ Movement::Lengths Movement::getBeltLengths(const double x, const double y) {
     leftLeg = getDilationCorrectedBeltLength(leftLeg, F_L);
     rightLeg = getDilationCorrectedBeltLength(rightLeg, F_R);
 
-    const int leftLegSteps = mmToSteps(leftLeg);
-    const int rightLegSteps = mmToSteps(rightLeg);
+    return Lengths(mmToSteps(leftLeg), mmToSteps(rightLeg));
+}
 
-    return Lengths(leftLegSteps, rightLegSteps);
+double Movement::computeCornerFactor(double dx, double dy) const {
+    const double len = sqrt(dx * dx + dy * dy);
+    const double prevLen = sqrt(lastSegmentDX * lastSegmentDX + lastSegmentDY * lastSegmentDY);
+    if (len < 1e-6 || prevLen < 1e-6) return 1.0;
+
+    double dot = (dx * lastSegmentDX + dy * lastSegmentDY) / (len * prevLen);
+    dot = std::max(-1.0, std::min(1.0, dot));
+    const double angle = acos(dot); // 0 = straight, pi = reverse
+    const double sharpness = angle / PI; // 0..1
+
+    // Junction-deviation style simple scaler
+    double f = 1.0 - sharpness * plannerCfg.cornerSlowdown;
+    if (f < plannerCfg.minCornerFactor) f = plannerCfg.minCornerFactor;
+    if (f > 1.0) f = 1.0;
+    return f;
 }
 
 float Movement::beginLinearTravel(double x, double y, int speed) {
-    X = x;
-    Y = y;
+    if (topDistance == -1 || !homed) throw std::invalid_argument("not ready");
+    if (x < 0 || (x - 1) > width) throw std::invalid_argument("Invalid x");
+    if (y < 0) throw std::invalid_argument("Invalid y");
+    if (speed <= 0) throw std::invalid_argument("Invalid speed");
 
-    if (topDistance == -1 || !homed) {
-        throw std::invalid_argument("not ready");
-    }
+    // Backlash compensation in XY when direction flips
+    double tx = x;
+    double ty = y;
+    const double dx = tx - X;
+    const double dy = ty - Y;
+    int dirX = (dx > 1e-6) ? 1 : ((dx < -1e-6) ? -1 : 0);
+    int dirY = (dy > 1e-6) ? 1 : ((dy < -1e-6) ? -1 : 0);
 
-    if (x < 0 || (x - 1) > width) {
-        throw std::invalid_argument("Invalid x");
-    }
+    if (lastDirX != 0 && dirX != 0 && dirX != lastDirX) tx += dirX * plannerCfg.backlashXmm;
+    if (lastDirY != 0 && dirY != 0 && dirY != lastDirY) ty += dirY * plannerCfg.backlashYmm;
 
-    if (y < 0) {
-        throw std::invalid_argument("Invalid y");
-    }
+    tx = std::max(0.0, std::min(width, tx));
+    if (ty < 0.0) ty = 0.0;
 
-    const auto lengths = getBeltLengths(x, y);
+    const auto lengths = getBeltLengths(tx, ty);
     const int leftLegSteps = lengths.left;
     const int rightLegSteps = lengths.right;
 
     const int deltaLeft = abs((int)leftMotor->currentPosition() - leftLegSteps);
     const int deltaRight = abs((int)rightMotor->currentPosition() - rightLegSteps);
 
-    float leftSpeed, rightSpeed, moveTime;
-
     const int maxDelta = (deltaLeft >= deltaRight) ? deltaLeft : deltaRight;
     if (maxDelta == 0) {
         moving = false;
+        X = tx; Y = ty;
         return 0.0f;
     }
 
-    if (speed <= 0) {
-        throw std::invalid_argument("Invalid speed");
+    // Dynamic feed from geometry/cornering
+    double cornerFactor = computeCornerFactor(dx, dy);
+    double targetSpeed = speed * cornerFactor;
+
+    // minimum segment-time clamp
+    if (plannerCfg.minSegmentTimeMs > 0) {
+        const double minTimeS = (double)plannerCfg.minSegmentTimeMs / 1000.0;
+        const double maxAllowedByTime = (double)maxDelta / minTimeS;
+        if (targetSpeed > maxAllowedByTime) targetSpeed = maxAllowedByTime;
     }
 
-    moveTime = (float)maxDelta / (float)speed;
+    if (targetSpeed < 1.0) targetSpeed = 1.0;
 
-    leftSpeed = (deltaLeft > 0) ? ((float)deltaLeft / moveTime) : 0.0f;
-    rightSpeed = (deltaRight > 0) ? ((float)deltaRight / moveTime) : 0.0f;
+    // Approximate S-curve by lowering accel around corners
+    double accelScale = 1.0 - ((1.0 - cornerFactor) * plannerCfg.sCurveFactor);
+    if (accelScale < 0.2) accelScale = 0.2;
+    const float localAccel = (float)std::max(1.0, accelerationSteps * accelScale);
+    leftMotor->setAcceleration(localAccel);
+    rightMotor->setAcceleration(localAccel);
 
+    const float moveTime = (float)maxDelta / (float)targetSpeed;
+    float leftSpeed = (deltaLeft > 0) ? ((float)deltaLeft / moveTime) : 0.0f;
+    float rightSpeed = (deltaRight > 0) ? ((float)deltaRight / moveTime) : 0.0f;
     if (leftSpeed > 0.0f && leftSpeed < 1.0f) leftSpeed = 1.0f;
     if (rightSpeed > 0.0f && rightSpeed < 1.0f) rightSpeed = 1.0f;
 
@@ -289,31 +343,30 @@ float Movement::beginLinearTravel(double x, double y, int speed) {
     rightMotor->moveTo(rightLegSteps);
     rightMotor->setSpeed(rightSpeed);
 
+    X = tx;
+    Y = ty;
+    lastSegmentDX = dx;
+    lastSegmentDY = dy;
+    lastDirX = dirX;
+    lastDirY = dirY;
+
     moving = true;
     return moveTime;
 }
 
 double Movement::getWidth() {
-    if (topDistance == -1) {
-        throw std::invalid_argument("not ready");
-    }
+    if (topDistance == -1) throw std::invalid_argument("not ready");
     return width;
 }
 
 Movement::Point Movement::getCoordinates() {
-    if (X == -1 || Y == -1) {
-        throw std::invalid_argument("not ready");
-    }
-    if (moving) {
-        throw std::invalid_argument("not ready");
-    }
+    if (X == -1 || Y == -1) throw std::invalid_argument("not ready");
+    if (moving) throw std::invalid_argument("not ready");
     return Point(X, Y);
 }
 
 Movement::Point Movement::getCoordinatesLive() {
-    if (X == -1 || Y == -1) {
-        return Point(0, 0);
-    }
+    if (X == -1 || Y == -1) return Point(0, 0);
     return Point(X, Y);
 }
 
@@ -331,7 +384,6 @@ void Movement::setSpeeds(int newPrintSpeed, int newMoveSpeed) {
 
 void Movement::extend1000mm() {
     const int steps = mmToSteps(1000.0);
-
     leftMotor->enableOutputs();
     rightMotor->enableOutputs();
 
@@ -350,9 +402,7 @@ void Movement::disableMotors() {
 }
 
 bool Movement::isMoving() { return moving; }
-
 bool Movement::hasStartedHoming() { return startedHoming; }
-
 int Movement::getTopDistance() { return topDistance; }
 
 Movement::MotionTuning Movement::getMotionTuning() const { return MotionTuning(infiniteStepsSteps, accelerationSteps); }
@@ -376,33 +426,27 @@ void Movement::setMotionTuning(long infiniteSteps, long acceleration) {
 void Movement::setEnablePins(int leftEnablePin, int rightEnablePin) {
   _leftEnablePin = leftEnablePin;
   _rightEnablePin = rightEnablePin;
-
   if (leftMotor)  leftMotor->setEnablePin(_leftEnablePin);
   if (rightMotor) rightMotor->setEnablePin(_rightEnablePin);
 }
 
-int Movement::getLeftEnablePin() const {
-  return _leftEnablePin;
-}
-
-int Movement::getRightEnablePin() const {
-  return _rightEnablePin;
-}
+int Movement::getLeftEnablePin() const { return _leftEnablePin; }
+int Movement::getRightEnablePin() const { return _rightEnablePin; }
 
 void Movement::setPulseWidths(int leftUs, int rightUs) {
-    (void)leftUs;
-    (void)rightUs;
-    _leftPulseWidthUs  = FIXED_PULSE_US;
-    _rightPulseWidthUs = FIXED_PULSE_US;
-    if (leftMotor)  leftMotor->setMinPulseWidth((unsigned int)_leftPulseWidthUs);
-    if (rightMotor) rightMotor->setMinPulseWidth((unsigned int)_rightPulseWidthUs);
+  if (leftUs < 1) leftUs = 1;
+  if (rightUs < 1) rightUs = 1;
+  if (leftUs > 1000) leftUs = 1000;
+  if (rightUs > 1000) rightUs = 1000;
+
+  _leftPulseWidthUs = leftUs;
+  _rightPulseWidthUs = rightUs;
+
+  if (leftMotor) leftMotor->setMinPulseWidth(_leftPulseWidthUs);
+  if (rightMotor) rightMotor->setMinPulseWidth(_rightPulseWidthUs);
+
+  WebLog::info("Pulse widths updated: left=" + String(_leftPulseWidthUs) + "us right=" + String(_rightPulseWidthUs) + "us");
 }
 
-
-int Movement::getLeftPulseWidthUs() const {
-    return _leftPulseWidthUs;
-}
-
-int Movement::getRightPulseWidthUs() const {
-    return _rightPulseWidthUs;
-}
+int Movement::getLeftPulseWidthUs() const { return _leftPulseWidthUs; }
+int Movement::getRightPulseWidthUs() const { return _rightPulseWidthUs; }
