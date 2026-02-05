@@ -42,7 +42,6 @@
 
 static SPIClass SdSpi(HSPI);
 
-
 // ================= GLOBAL OBJECTS =================
 
 AsyncWebServer server(80);
@@ -59,12 +58,13 @@ PhaseManager* phaseManager = nullptr;
 constexpr int ENABLE_PIN_A = 27;
 constexpr int ENABLE_PIN_B = 33;
 
-constexpr const char* PREF_KEY_LEFT_EN  = "leftEnPin";
-constexpr const char* PREF_KEY_RIGHT_EN = "rightEnPin";
-constexpr const char* PREF_KEY_PULSE_L = "pulseLeftUs";
-constexpr const char* PREF_KEY_PULSE_R = "pulseRightUs";
-constexpr const char* PREF_KEY_PEN_DOWN = "penDown";
-constexpr const char* PREF_KEY_PEN_UP   = "penUp";
+constexpr const char* PREF_KEY_LEFT_EN   = "leftEnPin";
+constexpr const char* PREF_KEY_RIGHT_EN  = "rightEnPin";
+constexpr const char* PREF_KEY_PULSE_L   = "pulseLeftUs";
+constexpr const char* PREF_KEY_PULSE_R   = "pulseRightUs";
+constexpr const char* PREF_KEY_PEN_DOWN  = "penDown";
+constexpr const char* PREF_KEY_PEN_UP    = "penUp";
+
 // Planner / quality tuning preference keys
 // Keep keys short (Preferences/NVS key length limit)
 constexpr const char* PREF_KEY_JUNC_DEV   = "jdev";
@@ -141,16 +141,12 @@ bool lastUp   = false;
 bool lastDown = false;
 
 // --- SD: stabiler Mount + Re-Mount ---
-// Problem: SD kann nach einer Weile "weg" sein (SPI-Glitch, Kontakt, Timeout, Filehandle-Leak).
-// Das alte tryMountSdOnce() mountet nur EINMAL -> danach bleibt SD dauerhaft kaputt.
-
 static bool gSdMounted = false;
 static uint32_t gSdLastAttemptMs = 0;
 static SemaphoreHandle_t gSdMutex = nullptr;
 
 static bool sdQuickSanity()
 {
-  // Minimaler Check ohne teure totalBytes() Calls.
   File root = SD.open("/");
   const bool ok = (root && root.isDirectory());
   if (root) root.close();
@@ -161,13 +157,11 @@ static bool ensureSdMounted(bool forceRemount = false)
 {
   const uint32_t now = millis();
 
-  // Wenn wir glauben gemountet zu sein: kurz pruefen.
   if (!forceRemount && gSdMounted) {
     if (sdQuickSanity()) return true;
     gSdMounted = false;
   }
 
-  // Remount nicht spammen.
   if (!forceRemount) {
     if ((now - gSdLastAttemptMs) < 1500) return false;
   }
@@ -187,8 +181,8 @@ static bool ensureSdMounted(bool forceRemount = false)
   const uint32_t freq = 8000000; // 8 MHz
   gSdMounted = SD.begin(SD_CS_PIN, SdSpi, freq);
 
-  if (gSdMounted) WebLog::info(String("SD mounted (CS=") + SD_CS_PIN + ", "+ String(freq/1000000) + "MHz)");
-  else WebLog::warn(String("SD not mounted (CS=") + SD_CS_PIN + ", "+ String(freq/1000000) + "MHz)");
+  if (gSdMounted) WebLog::info(String("SD mounted (CS=") + SD_CS_PIN + ", " + String(freq/1000000) + "MHz)");
+  else WebLog::warn(String("SD not mounted (CS=") + SD_CS_PIN + ", " + String(freq/1000000) + "MHz)");
 
   if (gSdMutex) {
     xSemaphoreGive(gSdMutex);
@@ -196,7 +190,7 @@ static bool ensureSdMounted(bool forceRemount = false)
   return gSdMounted;
 }
 
-// RAII Lock fuer SD-Operationen (AsyncWebServer kann parallel Requests verarbeiten)
+// RAII Lock fuer SD-Operationen
 struct SdGuard {
   bool locked = false;
   explicit SdGuard(bool enable) {
@@ -266,7 +260,11 @@ static bool isAllowedEnablePin(int pin)
 
 static void loadEnablePinsFromPrefs(int &leftPin, int &rightPin)
 {
+  leftPin  = prefs.getInt(PREF_KEY_LEFT_EN, ENABLE_PIN_A);
+  rightPin = prefs.getInt(PREF_KEY_RIGHT_EN, ENABLE_PIN_B);
 
+  if (!isAllowedEnablePin(leftPin))  leftPin = ENABLE_PIN_A;
+  if (!isAllowedEnablePin(rightPin)) rightPin = ENABLE_PIN_B;
 }
 
 static void applyEnablePinsAndSave(int leftPin, int rightPin)
@@ -291,7 +289,6 @@ static void ensureWifiOrAp()
   WiFiManager wifiManager;
   wifiManager.setConnectTimeout(20);
   wifiManager.setMenu(menu);
-
   wifiManager.setConfigPortalTimeout(180);
 
   const bool ok = wifiManager.autoConnect("Mural");
@@ -330,8 +327,6 @@ static void handleGetState(AsyncWebServerRequest *request)
   }
   phaseManager->respondWithState(request);
 }
-
-
 
 static void registerPulseWidthEndpoints(AsyncWebServer* server)
 {
@@ -372,6 +367,7 @@ static void registerPulseWidthEndpoints(AsyncWebServer* server)
     req->send(200, "application/json; charset=utf-8", out);
   });
 }
+
 static void registerDiagnosticsEndpoints(AsyncWebServer* server)
 {
   server->on("/diag", HTTP_GET, [](AsyncWebServerRequest* request) {
@@ -419,9 +415,8 @@ static void registerDiagnosticsEndpoints(AsyncWebServer* server)
 
     doc["LEFT_STEP_PIN"]   = (int)LEFT_STEP_PIN;
     doc["LEFT_DIR_PIN"]    = (int)LEFT_DIR_PIN;
-
-    doc["RIGHT_STEP_PIN"]   = (int)RIGHT_STEP_PIN;
-    doc["RIGHT_DIR_PIN"]    = (int)RIGHT_DIR_PIN;
+    doc["RIGHT_STEP_PIN"]  = (int)RIGHT_STEP_PIN;
+    doc["RIGHT_DIR_PIN"]   = (int)RIGHT_DIR_PIN;
 
     doc["perf_loop_ms"]     = (double)gPerf.loop_us_avg / 1000.0;
     doc["perf_yield_ms"]    = (double)gPerf.yield_us_avg / 1000.0;
@@ -435,8 +430,6 @@ static void registerDiagnosticsEndpoints(AsyncWebServer* server)
     request->send(200, "application/json; charset=utf-8", out);
   });
 }
-
-
 
 static bool copyFileOnFs(fs::FS* fs, const String& from, const String& to)
 {
@@ -490,7 +483,6 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
     req->send(200, "application/json; charset=utf-8", out);
   });
 
-  // SD: manuelles Remount (UI kann bei Fehlern einmal triggern)
   server->on("/sd/remount", HTTP_POST, [](AsyncWebServerRequest* req) {
     const bool ok = ensureSdMounted(true);
     StaticJsonDocument<128> doc;
@@ -508,7 +500,6 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
     path = normPath(path);
 
     const bool wantSd = (vol == "sd");
-    // SD ggf. neu mounten, wenn sie "weg" ist
     if (wantSd && !ensureSdMounted(false)) {
       req->send(503, "application/json", "{\"error\":\"SD not mounted\"}");
       return;
@@ -826,10 +817,8 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
 }
 
 constexpr bool ENABLE_ACTIVE_LOW = true;
-
 static bool gDrvLeftOn = false;
 static bool gDrvRightOn = false;
-
 
 static void registerDriverEnableEndpoints(AsyncWebServer* server)
 {
@@ -884,13 +873,17 @@ void setup()
 
   prefs.begin("mural", false);
 
+  int leftEnPin = ENABLE_PIN_A;
+  int rightEnPin = ENABLE_PIN_B;
+  loadEnablePinsFromPrefs(leftEnPin, rightEnPin);
+  if (movement) movement->setEnablePins(leftEnPin, rightEnPin);
+
   int storedPulseL = prefs.getInt(PREF_KEY_PULSE_L, 2);
   int storedPulseR = prefs.getInt(PREF_KEY_PULSE_R, 2);
   int storedPenDown = prefs.getInt(PREF_KEY_PEN_DOWN, 80);
   int storedPenUp   = prefs.getInt(PREF_KEY_PEN_UP, PEN_START_POS);
   if (movement) movement->setPulseWidths(storedPulseL, storedPulseR);
   WebLog::info(String("Loaded pulse widths: left=") + storedPulseL + "us right=" + storedPulseR + "us");
-
 
   int storedPrint = prefs.getInt("printSpeed", 1200);
   int storedMove  = prefs.getInt("moveSpeed", 2000);
@@ -902,6 +895,7 @@ void setup()
 
   WebLog::log(LOG_INFO, "Loaded tuning: infSteps=" + String(storedInfSteps) + " accel=" + String(storedAccel));
   WebLog::log(LOG_INFO, "Loaded speeds: print=" + String(storedPrint) + " move=" + String(storedMove));
+
   Movement::PlannerConfig cfg = movement->getPlannerConfig();
   cfg.junctionDeviationMM = prefs.getDouble(PREF_KEY_JUNC_DEV, cfg.junctionDeviationMM);
   cfg.lookaheadSegments   = prefs.getInt(PREF_KEY_LOOKAHEAD, cfg.lookaheadSegments);
@@ -914,10 +908,10 @@ void setup()
   cfg.backlashYmm         = prefs.getDouble(PREF_KEY_BACKLASHY, cfg.backlashYmm);
   cfg.sCurveFactor        = prefs.getDouble(PREF_KEY_SCURVE, cfg.sCurveFactor);
   movement->setPlannerConfig(cfg);
+
   WebLog::log(LOG_INFO, "Loaded planner: jd=" + String(cfg.junctionDeviationMM, 4) +
     " lookahead=" + String(cfg.lookaheadSegments) +
     " minSegMs=" + String(cfg.minSegmentTimeMs));
-
 
   ensureWifiOrAp();
 
@@ -936,9 +930,9 @@ void setup()
     pen->setDownAngle(storedPenDown);
     pen->setUpAngle(storedPenUp);
   }
+
   runner = new Runner(movement, pen, display);
   phaseManager = new PhaseManager(movement, pen, runner, &server);
-
 
   server.on("/command", HTTP_POST, [](AsyncWebServerRequest *request) {
     if (!phaseManager || !phaseManager->getCurrentPhase()) { request->send(503, "text/plain", "Phase not ready"); return; }
@@ -952,63 +946,62 @@ void setup()
 
   server.on("/getState", HTTP_GET, [](AsyncWebServerRequest *request) { handleGetState(request); });
 
-server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
-  StaticJsonDocument<1536> doc;
+  server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+    StaticJsonDocument<1536> doc;
 
-  auto p = movement ? movement->getCoordinatesLive() : Movement::Point();
-  doc["x"] = (double)p.x;
-  doc["y"] = (double)p.y;
+    auto p = movement ? movement->getCoordinatesLive() : Movement::Point();
+    doc["x"] = (double)p.x;
+    doc["y"] = (double)p.y;
 
-  const int prog = runner ? runner->getProgress() : 0;
-  const bool running = runner ? !runner->isStopped() : false;
-  const bool paused  = runner ? runner->isPaused()   : false;
+    const int prog = runner ? runner->getProgress() : 0;
+    const bool running = runner ? !runner->isStopped() : false;
+    const bool paused  = runner ? runner->isPaused()   : false;
 
-  doc["progress"] = prog;
-  doc["running"]  = running;
-  doc["paused"]   = paused;
+    doc["progress"] = prog;
+    doc["running"]  = running;
+    doc["paused"]   = paused;
 
-  doc["phaseName"]   = (phaseManager && phaseManager->getCurrentPhase()) ? phaseManager->getCurrentPhase()->getName() : "—";
-  doc["printSteps"]  = (int)printSpeedSteps;
+    doc["phaseName"]   = (phaseManager && phaseManager->getCurrentPhase()) ? phaseManager->getCurrentPhase()->getName() : "—";
+    doc["printSteps"]  = (int)printSpeedSteps;
+    doc["fwMaxLoopMs"] = (double)gPerf.max_loop_us / 1000.0;
 
-  doc["fwMaxLoopMs"] = (double)gPerf.max_loop_us / 1000.0;
+    JsonObject penObj = doc.createNestedObject("pen");
+    penObj["pos"]   = (pen && pen->isDown()) ? "DOWN" : "UP";
+    penObj["angle"] = pen ? pen->currentAngle() : 0;
 
-  JsonObject penObj = doc.createNestedObject("pen");
-  penObj["pos"]   = (pen && pen->isDown()) ? "DOWN" : "UP";
-  penObj["angle"] = pen ? pen->currentAngle() : 0;
+    penObj["downAngle"]      = pen ? pen->getDownAngle() : 0;
+    penObj["upAngle"]        = pen ? pen->getUpAngle() : 0;
+    penObj["pendingDown"]    = pen ? pen->getPendingDownAngle() : 0;
+    penObj["pendingUp"]      = pen ? pen->getPendingUpAngle() : 0;
+    penObj["hasPendingDown"] = pen ? pen->pendingDown() : false;
+    penObj["hasPendingUp"]   = pen ? pen->pendingUp() : false;
+    penObj["state"]          = penObj["pos"];
 
-  penObj["downAngle"] = pen ? pen->getDownAngle() : 0;
-  penObj["upAngle"] = pen ? pen->getUpAngle() : 0;
-  penObj["pendingDown"] = pen ? pen->getPendingDownAngle() : 0;
-  penObj["pendingUp"] = pen ? pen->getPendingUpAngle() : 0;
-  penObj["hasPendingDown"] = pen ? pen->pendingDown() : false;
-  penObj["hasPendingUp"] = pen ? pen->pendingUp() : false;
-  penObj["state"] = penObj["pos"];
+    JsonObject perf = doc.createNestedObject("perf");
+    perf["loop_ms"]     = (double)gPerf.loop_us_avg / 1000.0;
+    perf["yield_ms"]    = (double)gPerf.yield_us_avg / 1000.0;
+    perf["move_ms"]     = (double)gPerf.move_us_avg / 1000.0;
+    perf["runner_ms"]   = (double)gPerf.runner_us_avg / 1000.0;
+    perf["phase_ms"]    = (double)gPerf.phase_us_avg / 1000.0;
+    perf["max_loop_ms"] = (double)gPerf.max_loop_us / 1000.0;
 
-  JsonObject perf = doc.createNestedObject("perf");
-  perf["loop_ms"]     = (double)gPerf.loop_us_avg / 1000.0;
-  perf["yield_ms"]    = (double)gPerf.yield_us_avg / 1000.0;
-  perf["move_ms"]     = (double)gPerf.move_us_avg / 1000.0;
-  perf["runner_ms"]   = (double)gPerf.runner_us_avg / 1000.0;
-  perf["phase_ms"]    = (double)gPerf.phase_us_avg / 1000.0;
-  perf["max_loop_ms"] = (double)gPerf.max_loop_us / 1000.0;
     JsonObject plannerObj = doc["planner"].to<JsonObject>();
     auto pcfg = movement ? movement->getPlannerConfig() : Movement::PlannerConfig();
     plannerObj["junctionDeviation"] = pcfg.junctionDeviationMM;
     plannerObj["lookaheadSegments"] = pcfg.lookaheadSegments;
-    plannerObj["minSegmentTimeMs"] = pcfg.minSegmentTimeMs;
-    plannerObj["cornerSlowdown"] = pcfg.cornerSlowdown;
-    plannerObj["minCornerFactor"] = pcfg.minCornerFactor;
-    plannerObj["minSegmentLenMM"] = pcfg.minSegmentLenMM;
-    plannerObj["collinearDeg"] = pcfg.collinearDeg;
-    plannerObj["backlashXmm"] = pcfg.backlashXmm;
-    plannerObj["backlashYmm"] = pcfg.backlashYmm;
-    plannerObj["sCurveFactor"] = pcfg.sCurveFactor;
+    plannerObj["minSegmentTimeMs"]  = pcfg.minSegmentTimeMs;
+    plannerObj["cornerSlowdown"]    = pcfg.cornerSlowdown;
+    plannerObj["minCornerFactor"]   = pcfg.minCornerFactor;
+    plannerObj["minSegmentLenMM"]   = pcfg.minSegmentLenMM;
+    plannerObj["collinearDeg"]      = pcfg.collinearDeg;
+    plannerObj["backlashXmm"]       = pcfg.backlashXmm;
+    plannerObj["backlashYmm"]       = pcfg.backlashYmm;
+    plannerObj["sCurveFactor"]      = pcfg.sCurveFactor;
 
-
-  String out;
-  serializeJson(doc, out);
-  request->send(200, "application/json; charset=utf-8", out);
-});
+    String out;
+    serializeJson(doc, out);
+    request->send(200, "application/json; charset=utf-8", out);
+  });
 
   server.on("/pauseJob", HTTP_POST, [](AsyncWebServerRequest *request){
     if (runner) runner->pauseJob();
@@ -1039,9 +1032,10 @@ server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
     req->send(200, "application/json", "{\"ok\":true}");
   });
 
-    registerDiagnosticsEndpoints(&server);
-    registerFileManagerEndpoints(&server);
-    registerDriverEnableEndpoints(&server);   // <— HIER
+  registerDiagnosticsEndpoints(&server);
+  registerFileManagerEndpoints(&server);
+  registerDriverEnableEndpoints(&server);
+  registerPulseWidthEndpoints(&server);
 
   server.on("/setSpeeds", HTTP_POST, [](AsyncWebServerRequest *request){
     if (!request->hasParam("printSpeed", true) || !request->hasParam("moveSpeed", true)) {
@@ -1129,7 +1123,6 @@ server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->send(200, "text/plain", "OK");
   });
 
-
   server.on("/sysinfo", HTTP_GET, [](AsyncWebServerRequest *req) {
     const size_t total = LittleFS.totalBytes();
     const size_t used  = LittleFS.usedBytes();
@@ -1160,31 +1153,24 @@ server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
     json += "\"build\":\"" __DATE__ " " __TIME__ "\",";
     json += "\"reset_reason\":" + String(resetReason) + ",";
     json += "\"uptime_s\":" + String(uptimeS) + ",";
-
     json += "\"fs_total\":" + String(total) + ",";
     json += "\"fs_used\":" + String(used) + ",";
     json += "\"fs_free\":" + String(freeB) + ",";
     json += "\"fs_largest\":\"" + largest + "\",";
-
     json += "\"sd_mounted\":" + String((sd_ok && sdg.locked) ? "true" : "false") + ",";
     json += "\"sd_cs\":" + String((int)SD_CS_PIN) + ",";
     json += "\"sd_total\":" + String(sd_total) + ",";
     json += "\"sd_used\":"  + String(sd_used)  + ",";
     json += "\"sd_free\":"  + String(sd_free)  + ",";
-
     json += "\"heap\":" + String(ESP.getFreeHeap()) + ",";
     json += "\"min_heap\":" + String(ESP.getMinFreeHeap()) + ",";
-
     json += "\"rssi\":" + String(rssi) + ",";
     json += "\"ip\":\"" + ip + "\",";
     json += "\"host\":\"" + hostname + "\",";
-
     json += "\"cpu_mhz\":" + String(cpuMhz) + ",";
     json += "\"board\":\"" + board + "\",";
-
     json += "\"pulse_left_us\":" + String(movement ? movement->getLeftPulseWidthUs() : 0) + ",";
     json += "\"pulse_right_us\":" + String(movement ? movement->getRightPulseWidthUs() : 0) + ",";
-
     json += "\"mode\":\"unknown\",";
     json += "\"job\":0";
     json += "}";
@@ -1198,9 +1184,21 @@ server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
     ESP.restart();
   });
 
-  server.on("/extendToHome", HTTP_POST, [](AsyncWebServerRequest *request) { phaseManager->getCurrentPhase()->extendToHome(request); });
-  server.on("/setServo", HTTP_POST, [](AsyncWebServerRequest *request) { phaseManager->getCurrentPhase()->setServo(request); });
-  server.on("/setPenDistance", HTTP_POST, [](AsyncWebServerRequest *request) { phaseManager->getCurrentPhase()->setPenDistance(request); });
+  // Phase routes (guarded)
+  server.on("/extendToHome", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!phaseManager || !phaseManager->getCurrentPhase()) { request->send(503, "text/plain", "Phase not ready"); return; }
+    phaseManager->getCurrentPhase()->extendToHome(request);
+  });
+
+  server.on("/setServo", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!phaseManager || !phaseManager->getCurrentPhase()) { request->send(503, "text/plain", "Phase not ready"); return; }
+    phaseManager->getCurrentPhase()->setServo(request);
+  });
+
+  server.on("/setPenDistance", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!phaseManager || !phaseManager->getCurrentPhase()) { request->send(503, "text/plain", "Phase not ready"); return; }
+    phaseManager->getCurrentPhase()->setPenDistance(request);
+  });
 
   // Staged pen tuning (0..80). Values are applied on next transition only.
   server.on("/pen/down/set", HTTP_POST, [](AsyncWebServerRequest *request) {
@@ -1223,10 +1221,25 @@ server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->send(200, "application/json", String("{\"ok\":true,\"pendingUp\":") + v + "}");
   });
 
-  server.on("/estepsCalibration", HTTP_POST, [](AsyncWebServerRequest *request) { phaseManager->getCurrentPhase()->estepsCalibration(request); });
-  server.on("/doneWithPhase", HTTP_POST, [](AsyncWebServerRequest *request) { phaseManager->getCurrentPhase()->doneWithPhase(request); });
-  server.on("/run", HTTP_POST, [](AsyncWebServerRequest *request) { phaseManager->getCurrentPhase()->run(request); });
-  server.on("/resume", HTTP_POST, [](AsyncWebServerRequest *request) { phaseManager->getCurrentPhase()->resumeTopDistance(request); });
+  server.on("/estepsCalibration", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!phaseManager || !phaseManager->getCurrentPhase()) { request->send(503, "text/plain", "Phase not ready"); return; }
+    phaseManager->getCurrentPhase()->estepsCalibration(request);
+  });
+
+  server.on("/doneWithPhase", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!phaseManager || !phaseManager->getCurrentPhase()) { request->send(503, "text/plain", "Phase not ready"); return; }
+    phaseManager->getCurrentPhase()->doneWithPhase(request);
+  });
+
+  server.on("/run", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!phaseManager || !phaseManager->getCurrentPhase()) { request->send(503, "text/plain", "Phase not ready"); return; }
+    phaseManager->getCurrentPhase()->run(request);
+  });
+
+  server.on("/resume", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!phaseManager || !phaseManager->getCurrentPhase()) { request->send(503, "text/plain", "Phase not ready"); return; }
+    phaseManager->getCurrentPhase()->resumeTopDistance(request);
+  });
 
   server.on("/uploadCommands", HTTP_POST,
     [](AsyncWebServerRequest *request) { handleGetState(request); },
@@ -1245,8 +1258,6 @@ server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
   WebLog::info("HTTP server starting...");
   server.begin();
   WebLog::info("HTTP server started.");
-
-  server.begin();
 
   const String staIp = WiFi.localIP().toString();
   const String apIp  = WiFi.softAPIP().toString();
