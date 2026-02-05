@@ -1580,6 +1580,15 @@ function init() {
     initPulseWidthSettingsUI();
   });
 
+
+    document.getElementById('btnGrafOpen')?.addEventListener('click', () => {
+      // Variante A: direkt zu /graf/index.html
+      window.location.href = '/graf/index.html';
+
+      // Variante B (ohne sichtbaren Seitenwechsel): iframe-/View-Toggle Logik nutzen
+    });
+
+
   function doneWithPhase(custom) {
     $(".muralSlide").hide();
     $("#loadingSlide").show();
@@ -3836,3 +3845,13 @@ function initPulseWidthSettingsUI() {
   // Auto-load once at startup
   loadPulseWidths();
 }
+
+// ... dein bisheriger Code
+
+(function initGrafButton() {
+  const btn = document.getElementById('grafOpenSide');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    window.location.href = '/graf/index.html';
+  });
+})();

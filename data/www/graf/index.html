@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>V-Plotter Umhänge-Planer</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+</head>
+<body>
+  <div id="app">
+    <main id="stage" aria-label="Zeichenfläche">
+      <canvas id="c"></canvas>
+
+      <div id="hud" role="status" aria-live="polite">
+        <div class="hudLine"><span class="k">Zoom</span><span id="hudZoom">1.00×</span></div>
+        <div class="hudLine"><span class="k">Maus</span><span id="hudMouse">—</span></div>
+      </div>
+
+      <button id="openPanelFab" class="fab" type="button" aria-label="Einstellungen öffnen">⚙</button>
+    </main>
+
+    <aside id="panel" class="open" aria-label="Steuerpanel">
+      <div class="sheetHandle" aria-hidden="true"></div>
+
+      <header class="panelHead">
+        <div class="h1Row">
+          <div>
+            <div class="h1">Umhänge‑Planer</div>
+            <div class="h2">Mobil optimiert, alle Funktionen aktiv</div>
+          </div>
+          <div class="btnGroup headBtns">
+            <button id="btnGrafBack" class="tinyBtn secondary" type="button" aria-label="Zur Hauptseite">
+              <i class="bi bi-house-door"></i> Zur Hauptseite
+            </button>
+            <button id="togglePanel" class="tinyBtn secondary" type="button">Panel</button>
+          </div>
+        </div>
+      </header>
+
+      <div id="panelScroll">
+
+        <!-- Fenster 1: Geometrie -->
+        <section id="geoCard" class="card glass">
+          <div class="cardTitleRow">
+            <div class="cardTitle">Geometrie</div>
+            <button id="toggleGeoInputs" class="tinyBtn secondary" type="button">Ausblenden</button>
+          </div>
+
+          <div id="geoContent" class="foldContent">
+            <div class="grid2">
+              <label>Gesamtbreite (mm)
+                <input id="wallW" type="number" value="6000" min="1" step="1">
+              </label>
+              <label>Gesamthöhe (mm)
+                <input id="wallH" type="number" value="1400" min="1" step="1">
+              </label>
+
+              <label>TopDistance (mm)
+                <input id="topD" type="number" value="2000" min="1" step="1">
+              </label>
+              <label>Anzahl Bereiche
+                <input id="nAreas" type="number" value="4" min="1" step="1">
+              </label>
+
+              <label>SafeX‑Anteil
+                <input id="safeXFrac" type="number" value="0.2" min="0" max="0.49" step="0.01">
+              </label>
+              <label>SafeY‑Anteil
+                <input id="safeYFrac" type="number" value="0.2" min="0" max="0.9" step="0.01">
+              </label>
+
+              <label>Bohrhöhe vom Boden (mm)
+                <input id="holeFromFloor" type="number" value="2000" min="0" step="1">
+              </label>
+              <label>Start‑Offset X (mm)
+                <input id="startX" type="number" value="0" step="1">
+              </label>
+            </div>
+
+            <div class="row">
+              <button id="apply" class="primary">Neu berechnen</button>
+              <button id="center" class="secondary">Ansicht zentrieren</button>
+            </div>
+
+            <div class="note">
+              Modell: <b>rote Safe‑Zone oben global</b>, gelbe Malbereiche stoßen in X aneinander.
+              Pro Bereich zwei Bohrungen, Überlappung zwischen Bereichen ist erlaubt.
+            </div>
+          </div>
+        </section>
+
+        <!-- Fenster 2: Bild -->
+        <section id="imgCard" class="card glass">
+          <div class="cardTitleRow">
+            <div class="cardTitle">Bild</div>
+            <button id="toggleImgInputs" class="tinyBtn secondary" type="button">Ausblenden</button>
+          </div>
+
+          <div id="imgContent" class="foldContent">
+            <div class="row">
+              <input id="file" type="file" accept=".png,.jpg,.jpeg,.webp,.svg">
+            </div>
+
+            <div class="grid2">
+              <label>Bild‑Opacity
+                <input id="imgAlpha" type="number" value="0.55" min="0" max="1" step="0.05">
+              </label>
+              <label>Lock Aspect
+                <select id="lockAspect">
+                  <option value="1" selected>Ja</option>
+                  <option value="0">Nein</option>
+                </select>
+              </label>
+              <label>X (mm)
+                <input id="imgX" type="number" value="0" step="1">
+              </label>
+              <label>Y (mm)
+                <input id="imgY" type="number" value="0" step="1">
+              </label>
+              <label>W (mm)
+                <input id="imgW" type="number" value="6000" step="1">
+              </label>
+              <label>H (mm)
+                <input id="imgH" type="number" value="1400" step="1">
+              </label>
+            </div>
+
+            <div class="row">
+              <button id="scaleXMinus" class="secondary">X −</button>
+              <button id="scaleXPlus" class="secondary">X +</button>
+              <button id="scaleYMinus" class="secondary">Y −</button>
+              <button id="scaleYPlus" class="secondary">Y +</button>
+            </div>
+
+            <div class="row">
+              <label class="inlineLabel">Step (%)
+                <input id="scaleStepPct" type="number" value="5" min="0.1" max="50" step="0.5">
+              </label>
+            </div>
+
+            <div class="row">
+              <button id="moveLeft" class="secondary">◀</button>
+              <button id="moveUp" class="secondary">▲</button>
+              <button id="moveDown" class="secondary">▼</button>
+              <button id="moveRight" class="secondary">▶</button>
+            </div>
+
+            <div class="row">
+              <label class="inlineLabel">Move (mm)
+                <input id="moveStepMm" type="number" value="10" min="0.1" max="1000" step="1">
+              </label>
+            </div>
+
+            <div class="row">
+              <button id="fitWall" class="secondary">Bild → Gesamtfläche</button>
+              <button id="fitPaint" class="secondary">Bild → Gesamt‑Malfläche</button>
+            </div>
+            <div class="row">
+              <button id="fitPaintY" class="secondary">Bild‑Höhe → Malhöhe</button>
+              <button id="fitPaintX" class="secondary">Bild‑Breite → Malbreite</button>
+            </div>
+
+            <div class="row">
+              <button id="exportPng" class="secondary">Export Ansicht (PNG)</button>
+              <button id="exportSplit" class="primary">Export: Bild je Malbereich</button>
+            </div>
+
+            <div class="note">
+              Bedienung: 1 Finger Pan, 2 Finger Pinch‑Zoom. Auf Desktop: Wheel = Zoom.
+            </div>
+          </div>
+        </section>
+
+        <!-- Fenster 3: Listen -->
+        <section id="listsCard" class="card glass">
+          <div class="cardTitleRow">
+            <div class="cardTitle">Listen</div>
+            <div class="btnGroup">
+              <button id="onlyHolesMode" class="tinyBtn primary" type="button">Nur Bohrungsmaße</button>
+              <button id="toggleLists" class="tinyBtn secondary" type="button">Ausblenden</button>
+            </div>
+          </div>
+
+          <div id="listsContent" class="foldContent">
+            <div id="areasWrap" class="subListBlock">
+              <div class="cardTitleRow compact">
+                <div class="subTitle">Malbereiche</div>
+                <button id="toggleAreas" class="tinyBtn secondary" type="button">Ausblenden</button>
+              </div>
+              <div class="listCards" id="areasList"></div>
+            </div>
+
+            <div id="holesWrap" class="subListBlock">
+              <div class="cardTitleRow compact">
+                <div class="subTitle">Bohrungsmaße (vom Boden bemaßt)</div>
+                <button id="toggleHoles" class="tinyBtn secondary" type="button">Ausblenden</button>
+              </div>
+              <div class="listCards holesCards" id="holesList"></div>
+            </div>
+          </div>
+
+          <footer>
+            <div class="tiny">Alle Funktionen aktiv. Nur Layout/Look wurden neu aufgebaut.</div>
+          </footer>
+        </section>
+
+      </div>
+    </aside>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
