@@ -291,16 +291,16 @@ static void ensureWifiOrAp()
   wifiManager.setMenu(menu);
   wifiManager.setConfigPortalTimeout(180);
 
-  const bool ok = wifiManager.autoConnect("Mural");
+  const bool ok = wifiManager.autoConnect("maniac");
 
   if (ok && WiFi.status() == WL_CONNECTED) {
     WebLog::info(String("WiFi connected, IP=") + WiFi.localIP().toString());
     return;
   }
 
-  WebLog::warn("WiFi not connected -> starting AP 'Mural'");
+  WebLog::warn("WiFi not connected -> starting AP 'maniac'");
   WiFi.mode(WIFI_AP);
-  WiFi.softAP("Mural");
+  WiFi.softAP("maniac");
   delay(100);
   WebLog::info(String("AP started, AP_IP=") + WiFi.softAPIP().toString());
 }
@@ -871,7 +871,7 @@ void setup()
   display = new Display();
   movement = new Movement(display);
 
-  prefs.begin("mural", false);
+  prefs.begin("maniac", false);
 
   int leftEnPin = ENABLE_PIN_A;
   int rightEnPin = ENABLE_PIN_B;
@@ -915,8 +915,8 @@ void setup()
 
   ensureWifiOrAp();
 
-  if (!MDNS.begin("mural")) WebLog::warn("mDNS start failed");
-  else WebLog::info("mDNS started: mural.local");
+  if (!MDNS.begin("maniac")) WebLog::warn("mDNS start failed");
+  else WebLog::info("mDNS started: maniac.local");
 
 #if defined(ESP32)
   setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1);
@@ -1137,7 +1137,7 @@ void setup()
     const int rssi = WiFi.isConnected() ? WiFi.RSSI() : -127;
     const String ip = WiFi.isConnected() ? WiFi.localIP().toString() : String("0.0.0.0");
     const char* host = WiFi.getHostname();
-    const String hostname = host ? String(host) : String("mural");
+    const String hostname = host ? String(host) : String("maniac");
 
     const int cpuMhz = getCpuFrequencyMhz();
     const String board = String("ESP32");
@@ -1266,7 +1266,7 @@ void setup()
   display->displayHomeScreen(
     String("http://") + (staOk ? staIp : apIp),
     "or",
-    "http://mural.local"
+    "http://maniac.local"
   );
 
   WebLog::info(String("Webserver started: ") + (staOk ? staIp : apIp));
