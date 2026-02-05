@@ -1,7 +1,5 @@
-#include <Arduino.h>
 #include <WiFiManager.h>
 #include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
 
 #include <FS.h>
 #include <LittleFS.h>
@@ -939,6 +937,8 @@ void setup()
     pen->setUpAngle(storedPenUp);
   }
   runner = new Runner(movement, pen, display);
+  phaseManager = new PhaseManager(movement, pen, runner, &server);
+
 
   server.on("/command", HTTP_POST, [](AsyncWebServerRequest *request) {
     if (!phaseManager || !phaseManager->getCurrentPhase()) { request->send(503, "text/plain", "Phase not ready"); return; }
@@ -1242,7 +1242,9 @@ server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
 
   server.onNotFound(notFound);
 
-  phaseManager = new PhaseManager(movement, pen, runner, &server);
+  WebLog::info("HTTP server starting...");
+  server.begin();
+  WebLog::info("HTTP server started.");
 
   server.begin();
 
