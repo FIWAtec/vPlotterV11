@@ -1,50 +1,43 @@
-#include "movement.h"
 #include "interpolatingmovementtask.h"
 #include "service/weblog.h"
+#include <math.h>
 
 const char* InterpolatingMovementTask::NAME = "InterpolatingMovementTask";
 
-Movement::Point getNextIncrement(Movement::Point currentPosition, Movement::Point target) {
-    auto distanceBetween = Movement::distanceBetweenPoints(currentPosition, target);
-    if (distanceBetween <= INCREMENT) {
-        return target;
-    }
-
-    auto nextX = currentPosition.x + (INCREMENT / distanceBetween) * (target.x - currentPosition.x);
-    auto nextY = currentPosition.y + (INCREMENT / distanceBetween) * (target.y - currentPosition.y);
-
-    return Movement::Point(nextX, nextY);
-}
-
-bool arePointsEqual(Movement::Point point1, Movement::Point point2) {
-    return point1.x == point2.x && point1.y == point2.y;
-}
-
-InterpolatingMovementTask::InterpolatingMovementTask(Movement *movement, Movement::Point target) {
-    this->target = target;
+InterpolatingMovementTask::InterpolatingMovementTask(Movement* movement, Movement::Point target) {
     this->movement = movement;
+    this->target = target;
 }
 
 void InterpolatingMovementTask::startRunning() {
-   
-    auto currentCoordinates = movement->getCoordinates();
-    auto incrementPoint = getNextIncrement(currentCoordinates, target);
-    movement->beginLinearTravel(incrementPoint.x, incrementPoint.y, printSpeedSteps);
+    if (!movement) return;
+
+    try {
+        // Single direct move to target.
+        // This keeps segment-level cornering from Movement/Runner effective.
+        movement->beginLinearTravel(target.x, target.y, printSpeedSteps);
+        started = true;
+    } catch (const std::exception& e) {
+        WebLog::error(String("InterpolatingMovementTask start error: ") + e.what());
+        started = true; // avoid deadlock in runner
+    } catch (...) {
+        WebLog::error("InterpolatingMovementTask start unknown error");
+        started = true; // avoid deadlock in runner
+    }
 }
 
 bool InterpolatingMovementTask::isDone() {
-    if (movement->isMoving()) {
-        return false;
-    }
+    if (!started) return false;
+    if (!movement) return true;
 
-    auto currentPosition = movement->getCoordinates();
-    if (arePointsEqual(currentPosition, target)) {
-        return true;
-    }
+    if (movement->isMoving()) return false;
 
-    auto incrementPoint = getNextIncrement(movement->getCoordinates(), target);
-    movement->beginLinearTravel(incrementPoint.x, incrementPoint.y, printSpeedSteps);
-    
-    return false;
+    // Use tolerance instead of exact floating compare
+    Movement::Point p = movement->getCoordinatesLive();
+    const double dx = p.x - target.x;
+    const double dy = p.y - target.y;
+    const double dist = sqrt(dx * dx + dy * dy);
+
+    // 0.05 mm tolerance
+    return dist <= 0.05;
 }
-
