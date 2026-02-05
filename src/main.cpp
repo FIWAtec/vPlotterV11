@@ -452,8 +452,172 @@ static bool copyFileOnFs(fs::FS* fs, const String& from, const String& to)
   return true;
 }
 
+
+
+// ---------- Helpers for FileManager ----------
+
+static bool removeRecursive(fs::FS* fs, const String& path)
+{
+  if (!fs) return false;
+  if (!fs->exists(path)) return false;
+
+  File node = fs->open(path);
+  if (!node) return false;
+
+  if (!node.isDirectory()) {
+    node.close();
+    return fs->remove(path);
+  }
+
+  File child = node.openNextFile();
+  while (child) {
+    String childPath = String(child.name());
+    const bool isDir = child.isDirectory();
+    child.close();
+
+    bool ok = false;
+    if (isDir) ok = removeRecursive(fs, childPath);
+    else       ok = fs->remove(childPath);
+
+    if (!ok) {
+      node.close();
+      return false;
+    }
+
+    child = node.openNextFile();
+  }
+
+  node.close();
+  return fs->rmdir(path);
+}
+
+static bool copyFileOnFs(fs::FS* fs, const String& from, const String& to)
+{
+  if (!fs) return false;
+  File src = fs->open(from, "r");
+  if (!src || src.isDirectory()) return false;
+
+  File dst = fs->open(to, "w");
+  if (!dst) { src.close(); return false; }
+
+  uint8_t buf[1024];
+  while (src.available()) {
+    size_t n = src.read(buf, sizeof(buf));
+    if (n == 0) break;
+    if (dst.write(buf, n) != n) {
+      src.close();
+      dst.close();
+      return false;
+    }
+  }
+
+  src.close();
+  dst.close();
+  return true;
+}
+
+// ---------- Complete FileManager registration ----------
+static bool removeRecursive(fs::FS* fs, const String& path)
+{
+  if (!fs || path.isEmpty() || path == "/") return false;
+  if (!fs->exists(path)) return false;
+
+  File node = fs->open(path);
+  if (!node) return false;
+
+  if (!node.isDirectory()) {
+    node.close();
+    return fs->remove(path);
+  }
+
+  // Directory: delete children first
+  File child = node.openNextFile();
+  while (child) {
+    String childPath = String(child.path());   // full path on ESP32 FS
+    const bool isDir = child.isDirectory();
+    child.close();
+
+    bool ok = false;
+    if (isDir) ok = removeRecursive(fs, childPath);
+    else       ok = fs->remove(childPath);
+
+    if (!ok) {
+      node.close();
+      return false;
+    }
+    child = node.openNextFile();
+  }
+
+  node.close();
+  return fs->rmdir(path);
+}
+
+static bool ensureParentDirs(fs::FS* fs, const String& fullPath)
+{
+  if (!fs || fullPath.isEmpty() || fullPath[0] != '/') return false;
+  int lastSlash = fullPath.lastIndexOf('/');
+  if (lastSlash <= 0) return true; // root-level file
+
+  String dir = fullPath.substring(0, lastSlash);
+  if (dir.isEmpty()) return true;
+
+  // Build path step-by-step: /a, /a/b, /a/b/c
+  int pos = 1;
+  while (pos <= dir.length()) {
+    int slash = dir.indexOf('/', pos);
+    String part = (slash < 0) ? dir.substring(0) : dir.substring(0, slash);
+    if (part.length() > 0 && !fs->exists(part)) {
+      if (!fs->mkdir(part)) return false;
+    }
+    if (slash < 0) break;
+    pos = slash + 1;
+  }
+  return true;
+}
+
+
+static bool deleteRecursive(fs::FS* fs, const String& path)
+{
+  if (!fs) return false;
+  if (!isSafePath(path) || path == "/") return false;
+  if (!fs->exists(path)) return false;
+
+  File node = fs->open(path);
+  if (!node) return false;
+
+  // File -> direct delete
+  if (!node.isDirectory()) {
+    node.close();
+    return fs->remove(path);
+  }
+
+  // Directory -> delete children first
+  File child = node.openNextFile();
+  while (child) {
+    String childPath = String(child.path());
+    const bool childIsDir = child.isDirectory();
+    child.close();
+
+    bool ok = false;
+    if (childIsDir) ok = deleteRecursive(fs, childPath);
+    else ok = fs->remove(childPath);
+
+    if (!ok) {
+      node.close();
+      return false;
+    }
+    child = node.openNextFile();
+  }
+
+  node.close();
+  return fs->rmdir(path);
+}
+
+
+
 static void registerFileManagerEndpoints(AsyncWebServer* server)
 {
+  // Info
   server->on("/fs/info", HTTP_GET, [](AsyncWebServerRequest* req) {
     StaticJsonDocument<768> doc;
 
@@ -483,6 +647,7 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
     req->send(200, "application/json; charset=utf-8", out);
   });
 
+  // SD remount
   server->on("/sd/remount", HTTP_POST, [](AsyncWebServerRequest* req) {
     const bool ok = ensureSdMounted(true);
     StaticJsonDocument<128> doc;
@@ -494,6 +659,7 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
     req->send(ok ? 200 : 503, "application/json; charset=utf-8", out);
   });
 
+  // List directory
   server->on("/fs/list", HTTP_GET, [](AsyncWebServerRequest* req) {
     const String vol  = req->hasParam("vol")  ? req->getParam("vol")->value()  : String("lfs");
     String path       = req->hasParam("path") ? req->getParam("path")->value() : String("/");
@@ -504,6 +670,7 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
       req->send(503, "application/json", "{\"error\":\"SD not mounted\"}");
       return;
     }
+
     SdGuard sdg(wantSd);
     if (wantSd && !sdg.locked) {
       req->send(503, "application/json", "{\"error\":\"SD busy\"}");
@@ -547,6 +714,7 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
     req->send(200, "application/json; charset=utf-8", out);
   });
 
+  // Read text file
   server->on("/fs/read", HTTP_GET, [](AsyncWebServerRequest* req) {
     const String vol  = req->hasParam("vol")  ? req->getParam("vol")->value()  : String("lfs");
     String path       = req->hasParam("path") ? req->getParam("path")->value() : String("");
@@ -557,6 +725,7 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
       req->send(503, "application/json", "{\"error\":\"SD not mounted\"}");
       return;
     }
+
     SdGuard sdg(wantSd);
     if (wantSd && !sdg.locked) {
       req->send(503, "application/json", "{\"error\":\"SD busy\"}");
@@ -582,6 +751,7 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
     req->send(*fs, path, "text/plain");
   });
 
+  // Download file
   server->on("/fs/download", HTTP_GET, [](AsyncWebServerRequest* req) {
     const String vol  = req->hasParam("vol")  ? req->getParam("vol")->value()  : String("lfs");
     String path       = req->hasParam("path") ? req->getParam("path")->value() : String("");
@@ -592,6 +762,7 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
       req->send(503, "application/json", "{\"error\":\"SD not mounted\"}");
       return;
     }
+
     SdGuard sdg(wantSd);
     if (wantSd && !sdg.locked) {
       req->send(503, "application/json", "{\"error\":\"SD busy\"}");
@@ -617,6 +788,7 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
     req->send(*fs, path, "application/octet-stream", true);
   });
 
+  // Delete (file OR directory recursive)
   server->on("/fs/delete", HTTP_POST, [](AsyncWebServerRequest* req) {
     const String vol  = req->hasParam("vol", true)  ? req->getParam("vol", true)->value()  : String("lfs");
     String path       = req->hasParam("path", true) ? req->getParam("path", true)->value() : String("/");
@@ -624,34 +796,59 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
 
     const bool wantSd = (vol == "sd");
     if (wantSd && !ensureSdMounted(false)) {
-      req->send(503, "application/json", "{\"error\":\"SD not mounted\"}");
+      req->send(503, "application/json", "{\"ok\":false,\"error\":\"SD not mounted\"}");
       return;
     }
+
     SdGuard sdg(wantSd);
     if (wantSd && !sdg.locked) {
-      req->send(503, "application/json", "{\"error\":\"SD busy\"}");
+      req->send(503, "application/json", "{\"ok\":false,\"error\":\"SD busy\"}");
       return;
     }
 
     if (!isSafePath(path) || path == "/") {
-      req->send(400, "application/json", "{\"error\":\"Bad path\"}");
+      req->send(400, "application/json", "{\"ok\":false,\"error\":\"Bad path\"}");
       return;
     }
 
     fs::FS* fs = pickFs(vol);
     if (!fs) {
-      req->send(400, "application/json", "{\"error\":\"Volume not available\"}");
+      req->send(400, "application/json", "{\"ok\":false,\"error\":\"Volume not available\"}");
       return;
     }
 
-    bool ok = false;
-    File f = fs->open(path);
-    if (f && f.isDirectory()) ok = fs->rmdir(path);
-    else ok = fs->remove(path);
+    if (!fs->exists(path)) {
+      req->send(404, "application/json", "{\"ok\":false,\"error\":\"Not found\"}");
+      return;
+    }
 
-    req->send(ok ? 200 : 500, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
+    File f = fs->open(path);
+    if (!f) {
+      req->send(500, "application/json", "{\"ok\":false,\"error\":\"Open failed\"}");
+      return;
+    }
+
+    const bool isDir = f.isDirectory();
+    f.close();
+
+    bool ok = false;
+    if (isDir) {
+      ok = deleteRecursive(fs, path);   // now works for non-empty folders
+    } else {
+      ok = fs->remove(path);
+    }
+
+    if (!ok) {
+      WebLog::warn(String("Delete failed: vol=") + vol + " path=" + path);
+      req->send(500, "application/json", "{\"ok\":false,\"error\":\"Delete failed\"}");
+      return;
+    }
+
+    req->send(200, "application/json", "{\"ok\":true}");
   });
 
+
+  // Mkdir
   server->on("/fs/mkdir", HTTP_POST, [](AsyncWebServerRequest* req) {
     const String vol  = req->hasParam("vol", true)  ? req->getParam("vol", true)->value()  : String("lfs");
     String path       = req->hasParam("path", true) ? req->getParam("path", true)->value() : String("/");
@@ -662,6 +859,7 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
       req->send(503, "application/json", "{\"error\":\"SD not mounted\"}");
       return;
     }
+
     SdGuard sdg(wantSd);
     if (wantSd && !sdg.locked) {
       req->send(503, "application/json", "{\"error\":\"SD busy\"}");
@@ -683,6 +881,7 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
     req->send(ok ? 200 : 500, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
   });
 
+  // Rename
   server->on("/fs/rename", HTTP_POST, [](AsyncWebServerRequest* req) {
     const String vol = req->hasParam("vol", true) ? req->getParam("vol", true)->value() : String("lfs");
     String from      = req->hasParam("from", true) ? req->getParam("from", true)->value() : String("");
@@ -701,6 +900,7 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
       req->send(503, "application/json", "{\"error\":\"SD not mounted\"}");
       return;
     }
+
     SdGuard sdg(wantSd);
     if (wantSd && !sdg.locked) {
       req->send(503, "application/json", "{\"error\":\"SD busy\"}");
@@ -717,6 +917,7 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
     req->send(ok ? 200 : 500, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
   });
 
+  // Copy file
   server->on("/fs/copy", HTTP_POST, [](AsyncWebServerRequest* req) {
     const String vol = req->hasParam("vol", true) ? req->getParam("vol", true)->value() : String("lfs");
     String from      = req->hasParam("from", true) ? req->getParam("from", true)->value() : String("");
@@ -735,6 +936,7 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
       req->send(503, "application/json", "{\"error\":\"SD not mounted\"}");
       return;
     }
+
     SdGuard sdg(wantSd);
     if (wantSd && !sdg.locked) {
       req->send(503, "application/json", "{\"error\":\"SD busy\"}");
@@ -751,6 +953,7 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
     req->send(ok ? 200 : 500, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
   });
 
+  // Move (rename)
   server->on("/fs/move", HTTP_POST, [](AsyncWebServerRequest* req) {
     const String vol = req->hasParam("vol", true) ? req->getParam("vol", true)->value() : String("lfs");
     String from      = req->hasParam("from", true) ? req->getParam("from", true)->value() : String("");
@@ -769,6 +972,7 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
       req->send(503, "application/json", "{\"error\":\"SD not mounted\"}");
       return;
     }
+
     SdGuard sdg(wantSd);
     if (wantSd && !sdg.locked) {
       req->send(503, "application/json", "{\"error\":\"SD busy\"}");
@@ -785,6 +989,7 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
     req->send(ok ? 200 : 500, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
   });
 
+  // Upload file (chunked)
   server->on(
     "/fs/upload", HTTP_POST,
     [](AsyncWebServerRequest* req) {
@@ -797,6 +1002,7 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
 
       const bool wantSd = (vol == "sd");
       if (wantSd && !ensureSdMounted(false)) return;
+
       SdGuard sdg(wantSd);
       if (wantSd && !sdg.locked) return;
 
@@ -806,9 +1012,11 @@ static void registerFileManagerEndpoints(AsyncWebServer* server)
       if (index == 0) {
         req->_tempFile = fs->open(path, "w");
       }
+
       if (req->_tempFile) {
         req->_tempFile.write(data, len);
       }
+
       if (final) {
         if (req->_tempFile) req->_tempFile.close();
       }
