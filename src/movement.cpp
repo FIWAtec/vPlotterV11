@@ -15,7 +15,7 @@ Movement::Movement(Display* display) {
     leftMotor = new AccelStepper(AccelStepper::DRIVER, LEFT_STEP_PIN, LEFT_DIR_PIN);
     leftMotor->setMaxSpeed(moveSpeedSteps);
     leftMotor->setAcceleration((float)accelerationSteps);
-    leftMotor->setPinsInverted(true);
+    leftMotor->setPinsInverted(false);
     leftMotor->setMinPulseWidth(_leftPulseWidthUs);
     leftMotor->disableOutputs();
 

@@ -65,6 +65,8 @@ constexpr const char* PREF_KEY_LEFT_EN  = "leftEnPin";
 constexpr const char* PREF_KEY_RIGHT_EN = "rightEnPin";
 constexpr const char* PREF_KEY_PULSE_L = "pulseLeftUs";
 constexpr const char* PREF_KEY_PULSE_R = "pulseRightUs";
+constexpr const char* PREF_KEY_PEN_DOWN = "penDown";
+constexpr const char* PREF_KEY_PEN_UP   = "penUp";
 
 // Perf stats
 struct PerfStats {
@@ -282,16 +284,16 @@ static void ensureWifiOrAp()
 
   wifiManager.setConfigPortalTimeout(180);
 
-  const bool ok = wifiManager.autoConnect("maniac");
+  const bool ok = wifiManager.autoConnect("Mural");
 
   if (ok && WiFi.status() == WL_CONNECTED) {
     WebLog::info(String("WiFi connected, IP=") + WiFi.localIP().toString());
     return;
   }
 
-  WebLog::warn("WiFi not connected -> starting AP 'maniac'");
+  WebLog::warn("WiFi not connected -> starting AP 'Mural'");
   WiFi.mode(WIFI_AP);
-  WiFi.softAP("maniac");
+  WiFi.softAP("Mural");
   delay(100);
   WebLog::info(String("AP started, AP_IP=") + WiFi.softAPIP().toString());
 }
@@ -870,10 +872,12 @@ void setup()
   display = new Display();
   movement = new Movement(display);
 
-  prefs.begin("maniac", false);
+  prefs.begin("mural", false);
 
   int storedPulseL = prefs.getInt(PREF_KEY_PULSE_L, 2);
   int storedPulseR = prefs.getInt(PREF_KEY_PULSE_R, 2);
+  int storedPenDown = prefs.getInt(PREF_KEY_PEN_DOWN, 80);
+  int storedPenUp   = prefs.getInt(PREF_KEY_PEN_UP, PEN_START_POS);
   if (movement) movement->setPulseWidths(storedPulseL, storedPulseR);
   WebLog::info(String("Loaded pulse widths: left=") + storedPulseL + "us right=" + storedPulseR + "us");
 
@@ -891,8 +895,8 @@ void setup()
 
   ensureWifiOrAp();
 
-  if (!MDNS.begin("maniac")) WebLog::warn("mDNS start failed");
-  else WebLog::info("mDNS started: maniac.local");
+  if (!MDNS.begin("mural")) WebLog::warn("mDNS start failed");
+  else WebLog::info("mDNS started: mural.local");
 
 #if defined(ESP32)
   setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1);
@@ -902,6 +906,10 @@ void setup()
 #endif
 
   pen = new Pen();
+  if (pen) {
+    pen->setDownAngle(storedPenDown);
+    pen->setUpAngle(storedPenUp);
+  }
   runner = new Runner(movement, pen, display);
 
   server.on("/command", HTTP_POST, [](AsyncWebServerRequest *request) {
@@ -940,6 +948,12 @@ server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
   penObj["pos"]   = (pen && pen->isDown()) ? "DOWN" : "UP";
   penObj["angle"] = pen ? pen->currentAngle() : 0;
 
+  penObj["downAngle"] = pen ? pen->getDownAngle() : 0;
+  penObj["upAngle"] = pen ? pen->getUpAngle() : 0;
+  penObj["pendingDown"] = pen ? pen->getPendingDownAngle() : 0;
+  penObj["pendingUp"] = pen ? pen->getPendingUpAngle() : 0;
+  penObj["hasPendingDown"] = pen ? pen->pendingDown() : false;
+  penObj["hasPendingUp"] = pen ? pen->pendingUp() : false;
   penObj["state"] = penObj["pos"];
 
   JsonObject perf = doc.createNestedObject("perf");
@@ -1058,7 +1072,7 @@ server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
     const int rssi = WiFi.isConnected() ? WiFi.RSSI() : -127;
     const String ip = WiFi.isConnected() ? WiFi.localIP().toString() : String("0.0.0.0");
     const char* host = WiFi.getHostname();
-    const String hostname = host ? String(host) : String("maniac");
+    const String hostname = host ? String(host) : String("mural");
 
     const int cpuMhz = getCpuFrequencyMhz();
     const String board = String("ESP32");
@@ -1115,6 +1129,28 @@ server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
   server.on("/extendToHome", HTTP_POST, [](AsyncWebServerRequest *request) { phaseManager->getCurrentPhase()->extendToHome(request); });
   server.on("/setServo", HTTP_POST, [](AsyncWebServerRequest *request) { phaseManager->getCurrentPhase()->setServo(request); });
   server.on("/setPenDistance", HTTP_POST, [](AsyncWebServerRequest *request) { phaseManager->getCurrentPhase()->setPenDistance(request); });
+
+  // Staged pen tuning (0..80). Values are applied on next transition only.
+  server.on("/pen/down/set", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!pen) { request->send(500, "text/plain", "pen not ready"); return; }
+    if (!request->hasParam("value", true)) { request->send(400, "text/plain", "missing value"); return; }
+    int v = request->getParam("value", true)->value().toInt();
+    v = constrain(v, 0, 80);
+    pen->setPendingDownAngle(v);
+    prefs.putInt(PREF_KEY_PEN_DOWN, v);
+    request->send(200, "application/json", String("{\"ok\":true,\"pendingDown\":") + v + "}");
+  });
+
+  server.on("/pen/up/set", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!pen) { request->send(500, "text/plain", "pen not ready"); return; }
+    if (!request->hasParam("value", true)) { request->send(400, "text/plain", "missing value"); return; }
+    int v = request->getParam("value", true)->value().toInt();
+    v = constrain(v, 0, 80);
+    pen->setPendingUpAngle(v);
+    prefs.putInt(PREF_KEY_PEN_UP, v);
+    request->send(200, "application/json", String("{\"ok\":true,\"pendingUp\":") + v + "}");
+  });
+
   server.on("/estepsCalibration", HTTP_POST, [](AsyncWebServerRequest *request) { phaseManager->getCurrentPhase()->estepsCalibration(request); });
   server.on("/doneWithPhase", HTTP_POST, [](AsyncWebServerRequest *request) { phaseManager->getCurrentPhase()->doneWithPhase(request); });
   server.on("/run", HTTP_POST, [](AsyncWebServerRequest *request) { phaseManager->getCurrentPhase()->run(request); });
@@ -1145,7 +1181,7 @@ server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
   display->displayHomeScreen(
     String("http://") + (staOk ? staIp : apIp),
     "or",
-    "http://maniac.local"
+    "http://mural.local"
   );
 
   WebLog::info(String("Webserver started: ") + (staOk ? staIp : apIp));

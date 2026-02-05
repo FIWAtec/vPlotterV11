@@ -70,6 +70,12 @@ const liveHud = {
   printSteps: 0,
   penPos: "—",
   penAngle: 0,
+  penDownAngle: 80,
+  penUpAngle: 80,
+  pendingDown: 80,
+  pendingUp: 80,
+  hasPendingDown: false,
+  hasPendingUp: false,
   fwMaxLoopMs: 0
 };
 
@@ -665,6 +671,12 @@ function updateLiveHudFromStatus(data) {
   if (data.pen) {
     liveHud.penPos = data.pen.pos ?? data.pen.state ?? liveHud.penPos;
     liveHud.penAngle = (data.pen.angle !== undefined) ? data.pen.angle : liveHud.penAngle;
+    liveHud.penDownAngle = (data.pen.downAngle !== undefined) ? data.pen.downAngle : liveHud.penDownAngle;
+    liveHud.penUpAngle = (data.pen.upAngle !== undefined) ? data.pen.upAngle : liveHud.penUpAngle;
+    liveHud.pendingDown = (data.pen.pendingDown !== undefined) ? data.pen.pendingDown : liveHud.pendingDown;
+    liveHud.pendingUp = (data.pen.pendingUp !== undefined) ? data.pen.pendingUp : liveHud.pendingUp;
+    liveHud.hasPendingDown = !!data.pen.hasPendingDown;
+    liveHud.hasPendingUp = !!data.pen.hasPendingUp;
   }
 
   // bevorzugt top-level fwMaxLoopMs, sonst aus perf.max_loop_ms
@@ -672,6 +684,27 @@ function updateLiveHudFromStatus(data) {
   else if (data.perf && data.perf.max_loop_ms !== undefined) liveHud.fwMaxLoopMs = Number(data.perf.max_loop_ms) || 0;
 
   updatePerfHud();
+}
+
+
+function renderPenStageControls() {
+  const downSlider = document.getElementById("drawPenDownSlider");
+  const upSlider = document.getElementById("drawPenUpSlider");
+  const downVal = document.getElementById("drawPenDownValue");
+  const upVal = document.getElementById("drawPenUpValue");
+  if (!downSlider || !upSlider || !downVal || !upVal) return;
+
+  const down = Number(liveHud.hasPendingDown ? liveHud.pendingDown : liveHud.penDownAngle);
+  const up = Number(liveHud.hasPendingUp ? liveHud.pendingUp : liveHud.penUpAngle);
+
+  if (Number.isFinite(down)) {
+    downSlider.value = String(Math.max(0, Math.min(80, Math.round(down))));
+    downVal.textContent = downSlider.value;
+  }
+  if (Number.isFinite(up)) {
+    upSlider.value = String(Math.max(0, Math.min(80, Math.round(up))));
+    upVal.textContent = upSlider.value;
+  }
 }
 
 let logVisible = false;
@@ -2232,7 +2265,43 @@ $("#uploadSvg").off("change").on("change", async function () {
     });
   }
 
-  // Pause / Resume / Stop
+  
+  // Pen staged sliders (0..80), apply on next transition only
+  $("#drawPenDownSlider").on("input change", async function() {
+    const v = Math.max(0, Math.min(80, parseInt(this.value || "0", 10) || 0));
+    const t = document.getElementById("drawPenDownValue");
+    if (t) t.textContent = String(v);
+    try {
+      await fetch("/pen/down/set", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "value=" + encodeURIComponent(String(v))
+      });
+      liveHud.pendingDown = v;
+      liveHud.hasPendingDown = true;
+    } catch (e) {
+      console.error(e);
+    }
+  });
+
+  $("#drawPenUpSlider").on("input change", async function() {
+    const v = Math.max(0, Math.min(80, parseInt(this.value || "0", 10) || 0));
+    const t = document.getElementById("drawPenUpValue");
+    if (t) t.textContent = String(v);
+    try {
+      await fetch("/pen/up/set", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "value=" + encodeURIComponent(String(v))
+      });
+      liveHud.pendingUp = v;
+      liveHud.hasPendingUp = true;
+    } catch (e) {
+      console.error(e);
+    }
+  });
+
+// Pause / Resume / Stop
   $("#pauseBtn").click(async function() {
     try {
       await fetch("/pauseJob", { method: "POST" });
@@ -2813,6 +2882,7 @@ function startPerfPoll() {
       if (!res.ok) return;
       const data = await res.json();
       updateLiveHudFromStatus(data);
+      renderPenStageControls();
 
       // Event: Telemetrie Tick (für HUD/Stats)
       try { window.dispatchEvent(new CustomEvent("mural:telemetry", { detail: data })); } catch {}
@@ -2841,6 +2911,7 @@ function startTelemetry() {
       if (!res.ok) throw new Error("HTTP " + res.status);
       const data = await res.json();
       updateLiveHudFromStatus(data);
+      renderPenStageControls();
 
       document.getElementById("coordsDisplay").textContent =
         `X: ${data.x.toFixed(1)}  Y: ${data.y.toFixed(1)}`;

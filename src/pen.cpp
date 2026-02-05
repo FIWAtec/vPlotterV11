@@ -33,9 +33,17 @@ Pen::Pen()
 {
     penServo = new Servo();
     penServo->attach(PEN_SERVO_PIN);
-    currentPosition = PEN_START_POS;
-    penDistance     = 80;  // 
+
+    upAngle = PEN_START_POS;
+    downAngle = 80;
+
+    pendingUpAngle = upAngle;
+    pendingDownAngle = downAngle;
+    hasPendingUp = false;
+    hasPendingDown = false;
+
     slowSpeedDegPerSec = 80;
+    currentPosition = upAngle;
     penServo->write(currentPosition);
 }
 
@@ -48,24 +56,90 @@ void Pen::setRawValue(int rawValue)
 
 void Pen::setPenDistance(int value)
 {
-    penDistance = constrain(value, 0, 180);
+    // Keep old behavior for calibration route compatibility.
+    // Requested hard limits: 0..80
+    downAngle = constrain(value, 0, 80);
+}
+
+void Pen::setUpAngle(int value)
+{
+    upAngle = constrain(value, 0, 80);
+}
+
+void Pen::setDownAngle(int value)
+{
+    downAngle = constrain(value, 0, 80);
+}
+
+int Pen::getUpAngle() const
+{
+    return upAngle;
+}
+
+int Pen::getDownAngle() const
+{
+    return downAngle;
+}
+
+void Pen::setPendingUpAngle(int value)
+{
+    pendingUpAngle = constrain(value, 0, 80);
+    hasPendingUp = true;
+}
+
+void Pen::setPendingDownAngle(int value)
+{
+    pendingDownAngle = constrain(value, 0, 80);
+    hasPendingDown = true;
+}
+
+int Pen::getPendingUpAngle() const
+{
+    return pendingUpAngle;
+}
+
+int Pen::getPendingDownAngle() const
+{
+    return pendingDownAngle;
+}
+
+bool Pen::pendingUp() const
+{
+    return hasPendingUp;
+}
+
+bool Pen::pendingDown() const
+{
+    return hasPendingDown;
 }
 
 void Pen::slowUp()
 {
-    doSlowMove(this, currentPosition, PEN_START_POS, slowSpeedDegPerSec);
-    currentPosition = PEN_START_POS;
+    // Apply staged UP angle on next UP transition
+    if (hasPendingUp) {
+        upAngle = pendingUpAngle;
+        hasPendingUp = false;
+    }
+
+    doSlowMove(this, currentPosition, upAngle, slowSpeedDegPerSec);
+    currentPosition = upAngle;
 }
 
 void Pen::slowDown()
 {
-    doSlowMove(this, currentPosition, penDistance, slowSpeedDegPerSec);
-    currentPosition = penDistance;
+    // Apply staged DOWN angle on next DOWN transition
+    if (hasPendingDown) {
+        downAngle = pendingDownAngle;
+        hasPendingDown = false;
+    }
+
+    doSlowMove(this, currentPosition, downAngle, slowSpeedDegPerSec);
+    currentPosition = downAngle;
 }
 
 bool Pen::isDown()
 {
-    return currentPosition == penDistance;
+    return currentPosition == downAngle;
 }
 
 int Pen::currentAngle() const
