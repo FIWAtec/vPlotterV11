@@ -42,8 +42,8 @@ constexpr int HOME_Y_OFFSET_MM = 340;
 constexpr double safeYFraction = 0.2;
 constexpr double safeXFraction = 0.2;
 
-constexpr int LEFT_STEP_PIN = 33;
-constexpr int LEFT_DIR_PIN = 26;
+constexpr int LEFT_STEP_PIN = 26;
+constexpr int LEFT_DIR_PIN = 33;
 
 constexpr int RIGHT_STEP_PIN = 27;
 constexpr int RIGHT_DIR_PIN = 25;
