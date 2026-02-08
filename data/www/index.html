@@ -314,8 +314,7 @@
         </div>
 
         <div class="card p-3 mb-3">
-          <div class="small text-uppercase text-muted fw-semibold mb-2">Stift Feinabgleich (wird erst beim nächsten
-            Pen-Up/Pen-Down übernommen)</div>
+          <div class="small text-uppercase text-muted fw-semibold mb-2"></div>
 
           <label for="drawPenDownSlider" class="form-label mb-1">
             Pen-DOWN (0..80): <strong id="drawPenDownValue">80</strong>
@@ -328,7 +327,6 @@
           <input type="range" class="form-range" min="0" max="80" step="1" id="drawPenUpSlider">
 
           <div class="small text-muted mt-2">
-            Änderungen sind vorgemerkt und werden automatisch beim nächsten Übergang angewendet.
           </div>
         </div>
       </div>
@@ -336,7 +334,7 @@
 
     <!-- FOOTER -->
     <div class="mt-5">
-      <h6 class="m-0">MANIAC Version v10.0.04</h6>
+      <h6 class="m-0">MANIAC Version v20.0.04</h6>
     </div>
 
   </main>
@@ -1020,44 +1018,49 @@
 
 
   <!-- buttons -->
-  <div id="sideButtons" style="position:fixed; top:10px; right:10px; display:flex; flex-direction:column; gap:10px;">
+<!-- buttons -->
+<div id="sideButtons">
 
-    <!-- gear -->
-    <div data-bs-toggle="modal" data-bs-target="#toolsModal" style="cursor:pointer;">
-      <i class="bi-gear fs-2"></i>
-    </div>
+  <!-- gear -->
+  <button class="side-btn" type="button" data-bs-toggle="modal" data-bs-target="#toolsModal" title="Einstellungen">
+    <i class="bi bi-gear"></i>
+  </button>
 
-    <!-- graf öffnen -->
-    <div id="grafOpenSide" style="cursor:pointer;" title="Grafikseite öffnen">
-      <i class="bi-graph-up fs-2"></i>
-    </div>
+  <!-- graf öffnen -->
+  <button class="side-btn" id="grafOpenSide" type="button" title="Grafikseite öffnen">
+    <i class="bi bi-graph-up"></i>
+  </button>
 
-    <!-- live hud toggle (unter dem Zahnrad) -->
-    <div id="hudToggleSide" style="cursor:pointer;" title="Live anzeigen/ausblenden">
-      <i class="bi-activity fs-2"></i>
-    </div>
+  <!-- live hud toggle -->
+  <button class="side-btn" id="hudToggleSide" type="button" title="Live anzeigen/ausblenden">
+    <i class="bi bi-activity"></i>
+  </button>
 
-    <!-- file manager -->
-    <div data-bs-toggle="modal" data-bs-target="#fileManagerModal" style="cursor:pointer;"
-      title="Dateimanager (LittleFS/SD)">
-      <i class="bi-folder2-open fs-2"></i>
-    </div>
+  <!-- file manager -->
+  <button class="side-btn" type="button" data-bs-toggle="modal" data-bs-target="#fileManagerModal"
+    title="Dateimanager (LittleFS/SD)">
+    <i class="bi bi-folder2-open"></i>
+  </button>
 
-    <!-- system -->
-    <div data-bs-toggle="modal" data-bs-target="#systemModal" style="cursor:pointer;">
-      <i class="bi-cpu fs-2"></i>
-    </div>
-    <!-- help -->
-    <div data-bs-toggle="modal" data-bs-target="#helpModal" style="cursor:pointer;">
-      <i class="bi-question-circle fs-2"></i>
-    </div>
-    <!-- log/messages -->
-    <div id="logToggleSide" style="cursor:pointer; position:relative;">
-      <i class="bi-chat-left-text fs-2"></i>
-      <span id="msgBadge" class="msgBadge hidden"></span>
-    </div>
-    <div id="perfHud" class="perfHud"></div>
-  </div>
+  <!-- system -->
+  <button class="side-btn" type="button" data-bs-toggle="modal" data-bs-target="#systemModal" title="System">
+    <i class="bi bi-cpu"></i>
+  </button>
+
+  <!-- help -->
+  <button class="side-btn" type="button" data-bs-toggle="modal" data-bs-target="#helpModal" title="Hilfe">
+    <i class="bi bi-question-circle"></i>
+  </button>
+
+  <!-- log/messages -->
+  <button class="side-btn" id="logToggleSide" type="button" title="Nachrichten" style="position:relative;">
+    <i class="bi bi-chat-left-text"></i>
+    <span id="msgBadge" class="msgBadge hidden"></span>
+  </button>
+
+  <div id="perfHud" class="perfHud"></div>
+</div>
+
 
  
 
