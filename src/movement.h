@@ -16,7 +16,7 @@ constexpr int GT2_TEETH = 20;
 
 constexpr double LEGACY_DIAMETER_MM = 12.69;
 
-constexpr int stepsPerRotation = 200 * 16;
+constexpr int stepsPerRotation = 200 * 64;
 
 static inline double travelPerRotationMM() { return USE_GT2_PULLEY ? (GT2_TEETH * GT2_PITCH_MM) : (LEGACY_DIAMETER_MM * PI); }
 
