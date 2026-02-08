@@ -1,14 +1,10 @@
 #ifndef MOVEMENT_H
 #define MOVEMENT_H
 
-#include <FastAccelStepper.h>
+#include <AccelStepper.h>
 #include <Arduino.h>
 #include <math.h>
 #include "display.h"
-#include <TMCStepper.h>
-
-#define R_SENSE 0.11f
-#define TMC_UART_PIN 18
 
 extern int printSpeedSteps;
 extern int moveSpeedSteps;
@@ -20,7 +16,7 @@ constexpr int GT2_TEETH = 20;
 
 constexpr double LEGACY_DIAMETER_MM = 12.69;
 
-constexpr int stepsPerRotation = 200 * 64;
+constexpr int stepsPerRotation = 200 * 16;
 
 static inline double travelPerRotationMM() { return USE_GT2_PULLEY ? (GT2_TEETH * GT2_PITCH_MM) : (LEGACY_DIAMETER_MM * PI); }
 
@@ -180,13 +176,8 @@ class Movement {
     int lastDirX = 0;
     int lastDirY = 0;
 
-    FastAccelStepper* leftMotor;
-    FastAccelStepper* rightMotor;
-    FastAccelStepperEngine engine;
-
-    TMC2209Stepper* driverX = nullptr;
-    TMC2209Stepper* driverY = nullptr;
-
+    AccelStepper* leftMotor;
+    AccelStepper* rightMotor;
     Display* display;
 
     void setOrigin();

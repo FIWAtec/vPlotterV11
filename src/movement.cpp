@@ -6,79 +6,25 @@
 #include "movement.h"
 #include "service/weblog.h"
 
-HardwareSerial TMCSerial(1);
-
 int printSpeedSteps = 1200;
 int moveSpeedSteps = 2000;
 
 Movement::Movement(Display* display) {
     this->display = display;
 
-    // Init shared UART bus for TMC2209
-    TMCSerial.begin(115200, SERIAL_8N1, TMC_UART_PIN, TMC_UART_PIN);
+    leftMotor = new AccelStepper(AccelStepper::DRIVER, LEFT_STEP_PIN, LEFT_DIR_PIN);
+    leftMotor->setMaxSpeed(moveSpeedSteps);
+    leftMotor->setAcceleration((float)accelerationSteps);
+    leftMotor->setPinsInverted(false);
+    leftMotor->setMinPulseWidth(_leftPulseWidthUs);
+    leftMotor->disableOutputs();
 
-    // Init TMC2209 via UART (addresses from MS1/MS2 hardware state)
-    driverX = new TMC2209Stepper(&TMCSerial, R_SENSE, 0);
-    driverY = new TMC2209Stepper(&TMCSerial, R_SENSE, 1);
-
-    driverX->begin();
-    driverY->begin();
-
-
-
-// UART-Check direkt nach begin()
-
-    driverX = new TMC2209Stepper(&TMCSerial, R_SENSE, 0); // X addr 0
-    driverY = new TMC2209Stepper(&TMCSerial, R_SENSE, 1); // Y addr 1
-    const uint32_t ioinX = driverX->IOIN();
-    const uint32_t ioinY = driverY->IOIN();
-    WebLog::info("UART X IOIN=0x" + String(ioinX, HEX));
-    WebLog::info("UART Y IOIN=0x" + String(ioinY, HEX));
-
-
-
-
-
-    driverX->rms_current(1200); // 1.2A
-    driverY->rms_current(1200); // 1.2A
-
-    driverX->microsteps(16);
-    driverY->microsteps(16);
-
-    driverX->en_spreadCycle(false);
-    driverY->en_spreadCycle(false);
-
-    driverX->pwm_autoscale(true);
-    driverY->pwm_autoscale(true);
-
-    // Init FastAccelStepper
-    engine.init();
-
-    leftMotor = engine.stepperConnectToPin(LEFT_STEP_PIN);
-    rightMotor = engine.stepperConnectToPin(RIGHT_STEP_PIN);
-
-    if (leftMotor) {
-        leftMotor->setDirectionPin(LEFT_DIR_PIN);
-
-        // EN is hardwired LOW on hardware -> no software EN pin control
-        leftMotor->setAutoEnable(false);
-
-        leftMotor->setSpeedInHz(moveSpeedSteps);
-        leftMotor->setAcceleration(accelerationSteps);
-        leftMotor->setCurrentPosition(0);
-    }
-
-    if (rightMotor) {
-        // Right direction inversion kept (as in your earlier working variant)
-        rightMotor->setDirectionPin(RIGHT_DIR_PIN, false);
-
-        // EN is hardwired LOW on hardware -> no software EN pin control
-        rightMotor->setAutoEnable(false);
-
-        rightMotor->setSpeedInHz(moveSpeedSteps);
-        rightMotor->setAcceleration(accelerationSteps);
-        rightMotor->setCurrentPosition(0); 
-    }
+    rightMotor = new AccelStepper(AccelStepper::DRIVER, RIGHT_STEP_PIN, RIGHT_DIR_PIN);
+    rightMotor->setPinsInverted(true, false, false);
+    rightMotor->setMaxSpeed(moveSpeedSteps);
+    rightMotor->setAcceleration((float)accelerationSteps);
+    rightMotor->setMinPulseWidth(_rightPulseWidthUs);
+    rightMotor->disableOutputs();
 
     topDistance = -1;
     moving = false;
@@ -131,51 +77,44 @@ void Movement::resumeTopDistance(int distance) {
     lastDirY = 0;
 
     const Lengths lengths = getBeltLengths(homeCoordinates.x, homeCoordinates.y);
-    if (leftMotor) leftMotor->setCurrentPosition(lengths.left);
-    if (rightMotor) rightMotor->setCurrentPosition(lengths.right);
+    leftMotor->setCurrentPosition(lengths.left);
+    rightMotor->setCurrentPosition(lengths.right);
 
     moving = false;
 }
 
 void Movement::setOrigin() {
     const int hs = homedStepsOffsetSteps();
-    if (leftMotor) leftMotor->setCurrentPosition(hs);
-    if (rightMotor) rightMotor->setCurrentPosition(hs);
+    leftMotor->setCurrentPosition(hs);
+    rightMotor->setCurrentPosition(hs);
     homed = true;
 }
 
 void Movement::leftStepper(const int dir) {
-    if (!leftMotor) return;
-
     if (dir > 0) {
-        leftMotor->setAcceleration(accelerationSteps);
-        leftMotor->setSpeedInHz(printSpeedSteps);
         leftMotor->move(infiniteStepsSteps);
+        leftMotor->setSpeed(printSpeedSteps);
     } else if (dir < 0) {
-        leftMotor->setAcceleration(accelerationSteps);
-        leftMotor->setSpeedInHz(printSpeedSteps);
         leftMotor->move(-infiniteStepsSteps);
+        leftMotor->setSpeed(printSpeedSteps);
     } else {
-        leftMotor->setAcceleration(accelerationSteps);
-        leftMotor->stopMove();
+        leftMotor->setAcceleration((float)accelerationSteps);
+        leftMotor->stop();
     }
     moving = true;
 }
 
 void Movement::rightStepper(const int dir) {
-    if (!rightMotor) return;
-
     if (dir > 0) {
-        rightMotor->setAcceleration(accelerationSteps);
-        rightMotor->setSpeedInHz(printSpeedSteps);
         rightMotor->move(infiniteStepsSteps);
+        rightMotor->setSpeed(printSpeedSteps);
     } else if (dir < 0) {
-        rightMotor->setAcceleration(accelerationSteps);
-        rightMotor->setSpeedInHz(printSpeedSteps);
         rightMotor->move(-infiniteStepsSteps);
+        rightMotor->setSpeed(printSpeedSteps);
     } else {
-        rightMotor->setAcceleration(accelerationSteps);
-        rightMotor->stopMove();
+        rightMotor->setAcceleration((float)accelerationSteps);
+        rightMotor->setMinPulseWidth(_rightPulseWidthUs);
+        rightMotor->stop();
     }
     moving = true;
 }
@@ -198,10 +137,10 @@ int Movement::extendToHome() {
 void Movement::runSteppers() {
     if (!moving) return;
 
-    bool leftRunning = leftMotor ? leftMotor->isRunning() : false;
-    bool rightRunning = rightMotor ? rightMotor->isRunning() : false;
+    leftMotor->runSpeedToPosition();
+    rightMotor->runSpeedToPosition();
 
-    if (!leftRunning && !rightRunning) {
+    if (leftMotor->distanceToGo() == 0 && rightMotor->distanceToGo() == 0) {
         moving = false;
     }
 }
@@ -325,9 +264,10 @@ double Movement::computeCornerFactor(double dx, double dy) const {
 
     double dot = (dx * lastSegmentDX + dy * lastSegmentDY) / (len * prevLen);
     dot = std::max(-1.0, std::min(1.0, dot));
-    const double angle = acos(dot);
-    const double sharpness = angle / PI;
+    const double angle = acos(dot); // 0 = straight, pi = reverse
+    const double sharpness = angle / PI; // 0..1
 
+    // Junction-deviation style simple scaler
     double f = 1.0 - sharpness * plannerCfg.cornerSlowdown;
     if (f < plannerCfg.minCornerFactor) f = plannerCfg.minCornerFactor;
     if (f > 1.0) f = 1.0;
@@ -340,6 +280,7 @@ float Movement::beginLinearTravel(double x, double y, int speed) {
     if (y < 0) throw std::invalid_argument("Invalid y");
     if (speed <= 0) throw std::invalid_argument("Invalid speed");
 
+    // Backlash compensation in XY when direction flips
     double tx = x;
     double ty = y;
     const double dx = tx - X;
@@ -357,22 +298,21 @@ float Movement::beginLinearTravel(double x, double y, int speed) {
     const int leftLegSteps = lengths.left;
     const int rightLegSteps = lengths.right;
 
-    const int curL = leftMotor ? leftMotor->getCurrentPosition() : 0;
-    const int curR = rightMotor ? rightMotor->getCurrentPosition() : 0;
-    const int deltaLeft = abs(curL - leftLegSteps);
-    const int deltaRight = abs(curR - rightLegSteps);
+    const int deltaLeft = abs((int)leftMotor->currentPosition() - leftLegSteps);
+    const int deltaRight = abs((int)rightMotor->currentPosition() - rightLegSteps);
 
     const int maxDelta = (deltaLeft >= deltaRight) ? deltaLeft : deltaRight;
     if (maxDelta == 0) {
         moving = false;
-        X = tx;
-        Y = ty;
+        X = tx; Y = ty;
         return 0.0f;
     }
 
+    // Dynamic feed from geometry/cornering
     double cornerFactor = computeCornerFactor(dx, dy);
     double targetSpeed = speed * cornerFactor;
 
+    // minimum segment-time clamp
     if (plannerCfg.minSegmentTimeMs > 0) {
         const double minTimeS = (double)plannerCfg.minSegmentTimeMs / 1000.0;
         const double maxAllowedByTime = (double)maxDelta / minTimeS;
@@ -381,35 +321,27 @@ float Movement::beginLinearTravel(double x, double y, int speed) {
 
     if (targetSpeed < 1.0) targetSpeed = 1.0;
 
+    // Approximate S-curve by lowering accel around corners
     double accelScale = 1.0 - ((1.0 - cornerFactor) * plannerCfg.sCurveFactor);
     if (accelScale < 0.2) accelScale = 0.2;
-    const uint32_t localAccel = (uint32_t)std::max(1.0, (double)accelerationSteps * accelScale);
-    if (leftMotor) leftMotor->setAcceleration(localAccel);
-    if (rightMotor) rightMotor->setAcceleration(localAccel);
+    const float localAccel = (float)std::max(1.0, accelerationSteps * accelScale);
+    leftMotor->setAcceleration(localAccel);
+    rightMotor->setAcceleration(localAccel);
 
     const float moveTime = (float)maxDelta / (float)targetSpeed;
     float leftSpeed = (deltaLeft > 0) ? ((float)deltaLeft / moveTime) : 0.0f;
     float rightSpeed = (deltaRight > 0) ? ((float)deltaRight / moveTime) : 0.0f;
+    if (leftSpeed > 0.0f && leftSpeed < 1.0f) leftSpeed = 1.0f;
+    if (rightSpeed > 0.0f && rightSpeed < 1.0f) rightSpeed = 1.0f;
 
-    const float maxHz = (float)targetSpeed;
+    leftMotor->enableOutputs();
+    rightMotor->enableOutputs();
 
-    // upper clamp
-    if (leftSpeed > maxHz) leftSpeed = maxHz;
-    if (rightSpeed > maxHz) rightSpeed = maxHz;
+    leftMotor->moveTo(leftLegSteps);
+    leftMotor->setSpeed(leftSpeed);
 
-    // lower clamp (avoid 0 Hz on active axis)
-    if (deltaLeft > 0 && leftSpeed < 1.0f) leftSpeed = 1.0f;
-    if (deltaRight > 0 && rightSpeed < 1.0f) rightSpeed = 1.0f;
-
-    if (leftMotor) {
-        leftMotor->setSpeedInHz((uint32_t)leftSpeed);
-        leftMotor->moveTo(leftLegSteps);
-    }
-
-    if (rightMotor) {
-        rightMotor->setSpeedInHz((uint32_t)rightSpeed);
-        rightMotor->moveTo(rightLegSteps);
-    }
+    rightMotor->moveTo(rightLegSteps);
+    rightMotor->setSpeed(rightSpeed);
 
     X = tx;
     Y = ty;
@@ -444,32 +376,29 @@ void Movement::setSpeeds(int newPrintSpeed, int newMoveSpeed) {
     printSpeedSteps = newPrintSpeed;
     moveSpeedSteps = newMoveSpeed;
 
-    if (leftMotor) leftMotor->setSpeedInHz(moveSpeedSteps);
-    if (rightMotor) rightMotor->setSpeedInHz(moveSpeedSteps);
+    if (leftMotor) leftMotor->setMaxSpeed(moveSpeedSteps);
+    if (rightMotor) rightMotor->setMaxSpeed(moveSpeedSteps);
 
     Serial.printf("setSpeeds: print=%d, move=%d\n", printSpeedSteps, moveSpeedSteps);
 }
 
 void Movement::extend1000mm() {
     const int steps = mmToSteps(1000.0);
+    leftMotor->enableOutputs();
+    rightMotor->enableOutputs();
 
-    if (leftMotor) {
-        leftMotor->setSpeedInHz(moveSpeedSteps);
-        leftMotor->move(steps);
-    }
+    leftMotor->move(steps);
+    leftMotor->setSpeed(moveSpeedSteps);
 
-    if (rightMotor) {
-        rightMotor->setSpeedInHz(moveSpeedSteps);
-        rightMotor->move(steps);
-    }
+    rightMotor->move(steps);
+    rightMotor->setSpeed(moveSpeedSteps);
 
     moving = true;
 }
 
 void Movement::disableMotors() {
-    // EN is hardwired LOW -> cannot disable by EN pin in software
-    if (leftMotor) leftMotor->stopMove();
-    if (rightMotor) rightMotor->stopMove();
+    if (leftMotor) leftMotor->disableOutputs();
+    if (rightMotor) rightMotor->disableOutputs();
 }
 
 bool Movement::isMoving() { return moving; }
@@ -488,35 +417,35 @@ void Movement::setMotionTuning(long infiniteSteps, long acceleration) {
     infiniteStepsSteps = infiniteSteps;
     accelerationSteps = acceleration;
 
-    if (leftMotor) leftMotor->setAcceleration((uint32_t)accelerationSteps);
-    if (rightMotor) rightMotor->setAcceleration((uint32_t)accelerationSteps);
+    if (leftMotor) leftMotor->setAcceleration((float)accelerationSteps);
+    if (rightMotor) rightMotor->setAcceleration((float)accelerationSteps);
 
     WebLog::info("Tuning updated: infiniteSteps=" + String(infiniteStepsSteps) + " acceleration=" + String(accelerationSteps));
 }
 
 void Movement::setEnablePins(int leftEnablePin, int rightEnablePin) {
-    _leftEnablePin = leftEnablePin;
-    _rightEnablePin = rightEnablePin;
-
-    // EN is hardwired LOW on your setup -> keep values only for UI/config compatibility.
-    // Intentionally no setEnablePin() calls here.
+  _leftEnablePin = leftEnablePin;
+  _rightEnablePin = rightEnablePin;
+  if (leftMotor)  leftMotor->setEnablePin(_leftEnablePin);
+  if (rightMotor) rightMotor->setEnablePin(_rightEnablePin);
 }
 
 int Movement::getLeftEnablePin() const { return _leftEnablePin; }
 int Movement::getRightEnablePin() const { return _rightEnablePin; }
 
 void Movement::setPulseWidths(int leftUs, int rightUs) {
-    if (leftUs < 1) leftUs = 1;
-    if (rightUs < 1) rightUs = 1;
-    if (leftUs > 1000) leftUs = 1000;
-    if (rightUs > 1000) rightUs = 1000;
+  if (leftUs < 1) leftUs = 1;
+  if (rightUs < 1) rightUs = 1;
+  if (leftUs > 1000) leftUs = 1000;
+  if (rightUs > 1000) rightUs = 1000;
 
-    _leftPulseWidthUs = leftUs;
-    _rightPulseWidthUs = rightUs;
+  _leftPulseWidthUs = leftUs;
+  _rightPulseWidthUs = rightUs;
 
-    // FastAccelStepper does not expose per-motor min pulse width like AccelStepper.
-    // Kept values for config compatibility/UI persistence.
-    WebLog::info("Pulse widths updated (stored): left=" + String(_leftPulseWidthUs) + "us right=" + String(_rightPulseWidthUs) + "us");
+  if (leftMotor) leftMotor->setMinPulseWidth(_leftPulseWidthUs);
+  if (rightMotor) rightMotor->setMinPulseWidth(_rightPulseWidthUs);
+
+  WebLog::info("Pulse widths updated: left=" + String(_leftPulseWidthUs) + "us right=" + String(_rightPulseWidthUs) + "us");
 }
 
 int Movement::getLeftPulseWidthUs() const { return _leftPulseWidthUs; }
