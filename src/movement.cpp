@@ -16,18 +16,21 @@ Movement::Movement(Display* display) {
     leftMotor->setMaxSpeed(moveSpeedSteps);
     leftMotor->setAcceleration((float)accelerationSteps);
     leftMotor->setPinsInverted(false);
-    leftMotor->setMinPulseWidth(_leftPulseWidthUs);
+    _leftPulseWidthUs = 10;
+    _rightPulseWidthUs = 10;
+    leftMotor->setMinPulseWidth(10);
     leftMotor->disableOutputs();
 
     rightMotor = new AccelStepper(AccelStepper::DRIVER, RIGHT_STEP_PIN, RIGHT_DIR_PIN);
     rightMotor->setPinsInverted(true, false, false);
     rightMotor->setMaxSpeed(moveSpeedSteps);
     rightMotor->setAcceleration((float)accelerationSteps);
-    rightMotor->setMinPulseWidth(_rightPulseWidthUs);
+    rightMotor->setMinPulseWidth(10);
     rightMotor->disableOutputs();
 
     topDistance = -1;
     moving = false;
+    useAccelMode = false;
     homed = false;
     startedHoming = false;
 }
@@ -91,6 +94,7 @@ void Movement::setOrigin() {
 }
 
 void Movement::leftStepper(const int dir) {
+    useAccelMode = false;
     if (dir > 0) {
         leftMotor->move(infiniteStepsSteps);
         leftMotor->setSpeed(printSpeedSteps);
@@ -105,6 +109,7 @@ void Movement::leftStepper(const int dir) {
 }
 
 void Movement::rightStepper(const int dir) {
+    useAccelMode = false;
     if (dir > 0) {
         rightMotor->move(infiniteStepsSteps);
         rightMotor->setSpeed(printSpeedSteps);
@@ -137,11 +142,18 @@ int Movement::extendToHome() {
 void Movement::runSteppers() {
     if (!moving) return;
 
-    leftMotor->runSpeedToPosition();
-    rightMotor->runSpeedToPosition();
+    // For normal drawing we want ramping (AccelStepper::run), for manual jog we keep constant speed (runSpeedToPosition)
+    if (useAccelMode) {
+        leftMotor->run();
+        rightMotor->run();
+    } else {
+        leftMotor->runSpeedToPosition();
+        rightMotor->runSpeedToPosition();
+    }
 
     if (leftMotor->distanceToGo() == 0 && rightMotor->distanceToGo() == 0) {
         moving = false;
+        useAccelMode = false;
     }
 }
 
@@ -206,23 +218,22 @@ double Movement::solveTorqueEquilibrium(const double phi_L, const double phi_R, 
         if (abs(T_delta) < abs(T_delta_best)) {
             T_delta_best = T_delta;
             gamma_best = gamma;
-        } else {
-            return gamma_best;
         }
+        // no early return: scan full window to avoid gamma jumps
     }
     return gamma_best;
 }
 
 inline double Movement::getDilationCorrectedBeltLength(double belt_length_mm, double F_belt) const {
     const double elongation_factor = 1.0 + belt_elongation_coefficient * F_belt;
-    return belt_length_mm / elongation_factor;
+    return belt_length_mm * elongation_factor;
 }
 
 Movement::Lengths Movement::getBeltLengths(const double x, const double y) {
     const double frameX = x + minSafeXOffset;
     const double frameY = y + minSafeY;
 
-    double gamma = gamma_last_position;
+    double gamma = 0.0;
     double phi_L = 0.0, phi_R = 0.0;
     double F_L = 0.0, F_R = 0.0;
 
@@ -239,7 +250,7 @@ Movement::Lengths Movement::getBeltLengths(const double x, const double y) {
         if (abs(gamma_last - gamma) < gamma_delta_termination) break;
     }
 
-    gamma_last_position = gamma;
+    // gamma_last_position = gamma;
 
     double leftX, leftY, rightX, rightY;
     getLeftTangentPoint(frameX, frameY, gamma, leftX, leftY);
@@ -283,16 +294,25 @@ float Movement::beginLinearTravel(double x, double y, int speed) {
     // Backlash compensation in XY when direction flips
     double tx = x;
     double ty = y;
+
+    // direction based on original target
+    double dx0 = tx - X;
+    double dy0 = ty - Y;
+    int dirX0 = (dx0 > 1e-6) ? 1 : ((dx0 < -1e-6) ? -1 : 0);
+    int dirY0 = (dy0 > 1e-6) ? 1 : ((dy0 < -1e-6) ? -1 : 0);
+
+    if (lastDirX != 0 && dirX0 != 0 && dirX0 != lastDirX) tx += dirX0 * plannerCfg.backlashXmm;
+    if (lastDirY != 0 && dirY0 != 0 && dirY0 != lastDirY) ty += dirY0 * plannerCfg.backlashYmm;
+
+    // clamp
+    tx = std::max(0.0, std::min(width, tx));
+    if (ty < 0.0) ty = 0.0;
+
+    // IMPORTANT: recompute dx/dy AFTER backlash/clamp, these are the real segment vectors
     const double dx = tx - X;
     const double dy = ty - Y;
     int dirX = (dx > 1e-6) ? 1 : ((dx < -1e-6) ? -1 : 0);
     int dirY = (dy > 1e-6) ? 1 : ((dy < -1e-6) ? -1 : 0);
-
-    if (lastDirX != 0 && dirX != 0 && dirX != lastDirX) tx += dirX * plannerCfg.backlashXmm;
-    if (lastDirY != 0 && dirY != 0 && dirY != lastDirY) ty += dirY * plannerCfg.backlashYmm;
-
-    tx = std::max(0.0, std::min(width, tx));
-    if (ty < 0.0) ty = 0.0;
 
     const auto lengths = getBeltLengths(tx, ty);
     const int leftLegSteps = lengths.left;
@@ -324,9 +344,8 @@ float Movement::beginLinearTravel(double x, double y, int speed) {
     // Approximate S-curve by lowering accel around corners
     double accelScale = 1.0 - ((1.0 - cornerFactor) * plannerCfg.sCurveFactor);
     if (accelScale < 0.2) accelScale = 0.2;
-    const float localAccel = (float)std::max(1.0, accelerationSteps * accelScale);
-    leftMotor->setAcceleration(localAccel);
-    rightMotor->setAcceleration(localAccel);
+
+    const float localAccelBase = (float)std::max(1.0, accelerationSteps * accelScale);
 
     const float moveTime = (float)maxDelta / (float)targetSpeed;
     float leftSpeed = (deltaLeft > 0) ? ((float)deltaLeft / moveTime) : 0.0f;
@@ -337,11 +356,27 @@ float Movement::beginLinearTravel(double x, double y, int speed) {
     leftMotor->enableOutputs();
     rightMotor->enableOutputs();
 
-    leftMotor->moveTo(leftLegSteps);
-    leftMotor->setSpeed(leftSpeed);
+    leftMotor->setMaxSpeed(leftSpeed);
+    rightMotor->setMaxSpeed(rightSpeed);
 
+    // Sync ramp time: accel proportional to each motor's vmax
+    const float refV = (float)targetSpeed;
+    float aL = localAccelBase;
+    float aR = localAccelBase;
+
+    if (refV > 1.0f) {
+        aL = localAccelBase * (leftSpeed  / refV);
+        aR = localAccelBase * (rightSpeed / refV);
+    }
+
+    if (aL < 1.0f) aL = 1.0f;
+    if (aR < 1.0f) aR = 1.0f;
+
+    leftMotor->setAcceleration(aL);
+    rightMotor->setAcceleration(aR);
+
+    leftMotor->moveTo(leftLegSteps);
     rightMotor->moveTo(rightLegSteps);
-    rightMotor->setSpeed(rightSpeed);
 
     X = tx;
     Y = ty;
@@ -350,6 +385,7 @@ float Movement::beginLinearTravel(double x, double y, int speed) {
     lastDirX = dirX;
     lastDirY = dirY;
 
+    useAccelMode = true;
     moving = true;
     return moveTime;
 }
@@ -387,6 +423,8 @@ void Movement::extend1000mm() {
     leftMotor->enableOutputs();
     rightMotor->enableOutputs();
 
+    useAccelMode = false;
+
     leftMotor->move(steps);
     leftMotor->setSpeed(moveSpeedSteps);
 
@@ -408,11 +446,11 @@ int Movement::getTopDistance() { return topDistance; }
 Movement::MotionTuning Movement::getMotionTuning() const { return MotionTuning(infiniteStepsSteps, accelerationSteps); }
 
 void Movement::setMotionTuning(long infiniteSteps, long acceleration) {
-    if (infiniteSteps < 1000L) infiniteSteps = 1000L;
-    if (infiniteSteps > 2000000000L) infiniteSteps = 2000000000L;
+    constexpr long DEFAULT_INF = 999999999L;
+    constexpr long DEFAULT_ACC = 999999999L;
 
-    if (acceleration < 1L) acceleration = 1L;
-    if (acceleration > 2000000000L) acceleration = 2000000000L;
+    if (infiniteSteps <= 0L) infiniteSteps = DEFAULT_INF;
+    if (acceleration <= 0L) acceleration = DEFAULT_ACC;
 
     infiniteStepsSteps = infiniteSteps;
     accelerationSteps = acceleration;
@@ -434,18 +472,17 @@ int Movement::getLeftEnablePin() const { return _leftEnablePin; }
 int Movement::getRightEnablePin() const { return _rightEnablePin; }
 
 void Movement::setPulseWidths(int leftUs, int rightUs) {
-  if (leftUs < 1) leftUs = 1;
-  if (rightUs < 1) rightUs = 1;
-  if (leftUs > 1000) leftUs = 1000;
-  if (rightUs > 1000) rightUs = 1000;
+  // keep old API, but force fixed value for stability
+  (void)leftUs;
+  (void)rightUs;
 
-  _leftPulseWidthUs = leftUs;
-  _rightPulseWidthUs = rightUs;
+  _leftPulseWidthUs = 10;
+  _rightPulseWidthUs = 10;
 
-  if (leftMotor) leftMotor->setMinPulseWidth(_leftPulseWidthUs);
-  if (rightMotor) rightMotor->setMinPulseWidth(_rightPulseWidthUs);
+  if (leftMotor)  leftMotor->setMinPulseWidth(10);
+  if (rightMotor) rightMotor->setMinPulseWidth(10);
 
-  WebLog::info("Pulse widths updated: left=" + String(_leftPulseWidthUs) + "us right=" + String(_rightPulseWidthUs) + "us");
+  WebLog::info("Pulse widths fixed: left=10us right=10us");
 }
 
 int Movement::getLeftPulseWidthUs() const { return _leftPulseWidthUs; }

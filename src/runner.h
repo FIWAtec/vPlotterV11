@@ -20,12 +20,16 @@ private:
         QueuedCommand(Movement::Point pt) : type(Move), penDown(false), p(pt) {}
     };
 
+    bool penDownState = false;
+
     Movement *movement;
     Pen *pen;
     Display *display;
 
     void initTaskProvider();
     Task* getNextTask();
+
+
 
     bool fillLookaheadQueue();
     void optimizeLookaheadQueue();

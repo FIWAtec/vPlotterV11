@@ -4,19 +4,19 @@
 
 const char* InterpolatingMovementTask::NAME = "InterpolatingMovementTask";
 
-InterpolatingMovementTask::InterpolatingMovementTask(Movement* movement, Movement::Point target) {
+InterpolatingMovementTask::InterpolatingMovementTask(Movement* movement, Movement::Point target, int speedSteps) {
     this->movement = movement;
     this->target = target;
+    this->speedSteps = speedSteps;
 }
 
 void InterpolatingMovementTask::startRunning() {
     if (!movement) return;
 
     try {
-        // Single direct move to target.
-        // This keeps segment-level cornering from Movement/Runner effective.
-        movement->beginLinearTravel(target.x, target.y, printSpeedSteps);
-        started = true;
+
+    movement->beginLinearTravel(target.x, target.y, speedSteps);
+    started = true;
     } catch (const std::exception& e) {
         WebLog::error(String("InterpolatingMovementTask start error: ") + e.what());
         started = true; // avoid deadlock in runner

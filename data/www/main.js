@@ -1,6 +1,6 @@
 import * as svgControl from './svgControl.js';
 import * as client from './client.js';
-import { analyzePngLayers, buildCrassSvgFromPng } from "./png_layers.js";
+import { analyzePngLayers, buildCrassSvgFromPng, buildPngOutlineAndFillJob } from "./png_layers.js";
 const enableState = {
   left: false,
   right: false
@@ -530,6 +530,190 @@ function initPngUi() {
     return svgText;
   }
 
+
+  async function fetchStateForPng() {
+    try {
+      const res = await fetch("/getState", { cache: "no-store" });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  function loadSvgTextIntoUpload(svgText, filename) {
+    cachedUploadedKind = "svg";
+    cachedUploadedSvgString = svgText;
+
+    try {
+      svgControl.setSvgString(svgText, currentState);
+      $(".svg-control").show();
+      $("#preview").removeAttr("disabled");
+    } catch (e) {
+      console.warn("svgControl.setSvgString failed", e);
+    }
+
+    try {
+      const blob = new Blob([svgText], { type: "image/svg+xml" });
+      const genFile = new File([blob], filename || "generated.svg", { type: "image/svg+xml" });
+      const dt = new DataTransfer();
+      dt.items.add(genFile);
+      const input = document.getElementById("uploadSvg");
+      if (input) input.files = dt.files;
+
+      // show preview image as svg file (like normal upload)
+      setImagePreview(genFile);
+    } catch (e) {
+      console.warn("Failed to set uploadSvg input", e);
+    }
+  }
+
+  function waitForPngLayerModal(message) {
+    return new Promise((resolve) => {
+      const el = document.getElementById("pngLayerModal");
+      const txt = document.getElementById("pngLayerModalText");
+      const btn = document.getElementById("pngLayerModalContinue");
+
+      if (!el || !btn || !window.bootstrap) {
+        // fallback
+        try { alert(message); } catch {}
+        resolve();
+        return;
+      }
+
+      try { if (txt) txt.textContent = message || "Bitte Farbe wechseln…"; } catch {}
+
+      const modal = bootstrap.Modal.getOrCreateInstance(el, { backdrop: "static", keyboard: false });
+      const onClick = () => {
+        try { btn.removeEventListener("click", onClick); } catch {}
+        try { modal.hide(); } catch {}
+        resolve();
+      };
+      btn.addEventListener("click", onClick);
+      modal.show();
+    });
+  }
+
+  async function startPngOutlineFillJob() {
+    if (!currentFile || !isPngFile(currentFile)) return;
+
+    // Reset batch for a fresh sequence
+    try {
+      window.__svgBatchActive = true;
+      window.__svgBatchIndex = 0;
+      batchSettings = null;
+      batchAutoUploadPending = false;
+    } catch {}
+
+    const tolerance = clampNum(tolEl?.value ?? "90", 10, 180);
+    const stepMm = clampNum(hatchEl?.value ?? "1", 1, 12); // now treated as mm
+    const selected = getSelectedHexesForMode();
+
+    const st = await fetchStateForPng();
+    const safeWidthMm = Number(st?.safeWidth || 0);
+
+    if (window.addMessage) window.addMessage(0, "PNG-Layer", "Erzeuge Outlines + Füllung…");
+    $("#transformText").text("PNG → Outlines + Füllung läuft…");
+
+    const job = await buildPngOutlineAndFillJob(currentFile, selected, {
+      tolerance,
+      turdSize: 12,
+      penWidthMm: 1.0,
+      fillStepMm: stepMm,
+      hatchAngle: 35,
+      safeWidthMm
+    });
+
+    if (!job?.queue || job.queue.length === 0) {
+      alert("PNG-Layer: Keine Daten erzeugt (Farben prüfen)");
+      return;
+    }
+
+    window.__pngLayerJob = { queue: job.queue, index: 0, active: true };
+
+    // Hook: when drawing finished, advance automatically
+    window.onBatchDrawingFinished = () => {
+      advancePngLayerJob().catch(err => console.error(err));
+    };
+
+    // Load first (OUTLINES) like SVG upload
+    const first = job.queue[0];
+    loadSvgTextIntoUpload(first.svg, first.name);
+
+    // go to choose-renderer slide (same as SVG)
+    const choose = byId("chooseRendererSlide");
+    const svgSlide = byId("svgUploadSlide");
+    if (choose && svgSlide) {
+      svgSlide.style.display = "none";
+      choose.style.display = "";
+    }
+
+    $("#transformText").text("PNG-Layer bereit: Outlines");
+  }
+
+  async function advancePngLayerJob() {
+    const j = window.__pngLayerJob;
+    if (!j || !j.active) return;
+
+    j.index = Number(j.index || 0) + 1;
+    window.__svgBatchIndex = j.index;
+
+    if (j.index >= j.queue.length) {
+      j.active = false;
+      window.__svgBatchActive = false;
+      if (window.addMessage) window.addMessage(0, "PNG-Layer", "Fertig");
+      return;
+    }
+
+    const item = j.queue[j.index];
+
+    // prompt color change (fill layers)
+    if (item.prompt) {
+      await waitForPngLayerModal(item.prompt);
+    }
+
+    // Load next SVG into upload
+    loadSvgTextIntoUpload(item.svg, item.name);
+
+    // If we have batchSettings (from first SVG), auto-apply + auto-render + auto-upload
+    try {
+      if (batchSettings) {
+        if (batchSettings.affine && typeof svgControl.setAffineTransform === "function") {
+          svgControl.setAffineTransform(batchSettings.affine);
+        }
+
+        $("#infillDensity").val(batchSettings.infillDensity ?? 0);
+        $("#turdSize").val(batchSettings.turdSize ?? 2);
+        $("#flattenPathsCheckbox").prop("checked", !!batchSettings.flattenPaths);
+
+        rendererKey = (batchSettings.rendererKey === "vrv") ? "vrv" : "path";
+        rendererFn = (rendererKey === "vrv") ? render_VectorRasterVector : render_PathTracing;
+
+        $("#svgUploadSlide").hide();
+        $("#chooseRendererSlide").hide();
+        $("#drawingPreviewSlide").show();
+
+        uploadConvertedCommands = null;
+        batchAutoUploadPending = true;
+        activateProgressBar();
+        $("#acceptSvg").attr("disabled", "disabled");
+
+        await rendererFn();
+      } else {
+        // no settings yet -> user chooses renderer for first layer
+        const choose = byId("chooseRendererSlide");
+        const svgSlide = byId("svgUploadSlide");
+        if (choose && svgSlide) {
+          svgSlide.style.display = "none";
+          choose.style.display = "";
+        }
+      }
+    } catch (e) {
+      console.error(e);
+      if (window.addMessage) window.addMessage(2, "PNG-Layer", "Auto-Render fehlgeschlagen: " + (e?.message || e));
+    }
+  }
+
   upload.addEventListener("change", async () => {
     const file = upload.files?.[0];
     currentFile = file ?? null;
@@ -579,13 +763,13 @@ function initPngUi() {
   hatchEl?.addEventListener("input", () => {
   });
 
-  startLayerJobBtn?.addEventListener("click", () => {
-    const selected = getSelectedHexesForMode();
-    console.log("Layer-Job Queue (selected):", selected);
-    alert(`Layer-Queue: ${selected.length}\n(Details in der Konsole)`);
+    startLayerJobBtn?.addEventListener("click", () => {
+    startPngOutlineFillJob().catch(err => {
+      console.error(err);
+      alert("PNG-Layer fehlgeschlagen: " + String(err?.message ?? err));
+    });
   });
-
-  previewBtn?.addEventListener("click", async () => {
+previewBtn?.addEventListener("click", async () => {
     if (!currentFile) return;
 
     if (isSvgFile(currentFile)) {
@@ -2927,26 +3111,53 @@ function startTelemetry() {
       document.getElementById("drawProgressBar").style.width = `${data.progress}%`;
       document.getElementById("drawProgressText").textContent = `${data.progress}%`;
 
-      // SVG-Serie: Job-Ende erkennen -> Popup (Weiter?)
+      // Job-Ende erkennen (running=true -> false bei hohem Progress) -> automatisch zu SVG-Upload wechseln
       try {
-        if (window.__svgBatchActive) {
-          const last = !!window.__batchLastRunning;
-          const now  = !!data.running;
-          // Übergang running=true -> running=false bei hohem Progress
-          if (last && !now && (Number(data.progress) >= 99) && !data.paused) {
-            window.__batchLastRunning = false;
-            if (typeof window.onBatchDrawingFinished === "function") {
-              window.onBatchDrawingFinished();
-            }
-          } else {
-            window.__batchLastRunning = now;
-          }
-        } else {
-          window.__batchLastRunning = !!data.running;
-        }
-      } catch {}
+        const last = !!window.__uiLastRunning;
+        const now  = !!data.running;
 
-      // Firmware-Perf (Main loop): gemessene Werte anzeigen (nicht deine UI-Settings)
+        // Keep last state always updated
+        window.__uiLastRunning = now;
+
+        // Only react once per finish edge
+        if (last && !now && (Number(data.progress) >= 99) && !data.paused) {
+          if (!window.__uiFinishLatch) {
+            window.__uiFinishLatch = true;
+
+            // Wenn Batch aktiv: optionaler Callback bleibt kompatibel
+            try {
+              if (window.__svgBatchActive && typeof window.onBatchDrawingFinished === "function") {
+                window.onBatchDrawingFinished();
+              }
+            } catch {}
+
+            // UI: direkt zur Upload-Seite springen (Firmware-Phase bleibt ggf. BeginDrawing)
+            try {
+              $(".muralSlide").hide();
+              $("#beginDrawingSlide").hide();
+              $("#chooseRendererSlide").hide();
+              $("#svgUploadSlide").show();
+
+              // Upload-UI zurücksetzen, damit Preview wieder korrekt erscheint
+              const input = document.getElementById("uploadSvg");
+              if (input) input.value = "";
+
+              $("#sourceSvg").hide();
+              $(".svg-control").hide();
+              $("#preview").prop("disabled", true);
+
+              // oben anfangen, sonst bleibt man optisch "hängen"
+              try { window.scrollTo(0, 0); } catch {}
+            } catch (e) {
+              console.warn("Auto-switch to SVG upload failed", e);
+            }
+          }
+        }
+
+        // Latch wieder freigeben, sobald wieder running=true (nächster Job)
+        if (now) window.__uiFinishLatch = false;
+      } catch {}
+// Firmware-Perf (Main loop): gemessene Werte anzeigen (nicht deine UI-Settings)
       try {
         const p = data.perf || {};
         setPerfStat("fwLoopMs",    p.loop_ms);

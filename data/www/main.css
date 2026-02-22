@@ -40,23 +40,23 @@ body > div[style*="position:fixed"][style*="right"] {
   z-index: 1000;
 }
 .bi-gear,
+.bi-graph-up,
 .bi-activity,
 .bi-folder2-open,
 .bi-question-circle,
 .bi-cpu,
 .bi-chat-left-text {
 
-  width: 44px;
-  height: 44px;
+  width: clamp(40px, 8vw, 52px);
+  height: clamp(40px, 8vw, 52px);
+  font-size: clamp(18px, 3.5vw, 22px);
+  border-radius: clamp(12px, 2.5vw, 16px);
 
   display: inline-flex;
   align-items: center;
   justify-content: center;
 
-  font-size: 20px;
   color: rgba(255, 255, 255, 0.95);
-
-  border-radius: 14px;
   cursor: pointer;
 
   background: rgba(255, 255, 255, 0.18);
@@ -72,7 +72,9 @@ body > div[style*="position:fixed"][style*="right"] {
     box-shadow 0.25s ease,
     transform 0.2s ease;
 }
+
 .bi-gear:hover,
+.bi-graph-up:hover,
 .bi-activity:hover,
 .bi-folder2-open:hover,
 .bi-question-circle:hover,
@@ -84,7 +86,9 @@ body > div[style*="position:fixed"][style*="right"] {
     0 14px 36px rgba(0, 0, 0, 0.45),
     inset 0 1px 0 rgba(255, 255, 255, 0.45);
 }
+
 .bi-gear:active,
+.bi-graph-up:active,
 .bi-activity:active,
 .bi-folder2-open:active,
 .bi-question-circle:active,
@@ -1502,4 +1506,33 @@ main.form-signin::-webkit-scrollbar-thumb {
   font-weight: 600;
   line-height: 1.1;
   text-align: center;
+}
+
+
+/* Job finished overlay (simple, predictable, no drama) */
+.job-finished-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+}
+
+.job-finished-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(6px);
+}
+
+.job-finished-card {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(560px, calc(100% - 32px));
+  padding: 18px 18px 16px 18px;
+  border-radius: 16px;
+  background: rgba(25, 25, 25, 0.92);
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.55);
+  color: #fff;
 }

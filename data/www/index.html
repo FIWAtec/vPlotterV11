@@ -314,29 +314,23 @@
         </div>
 
         <div class="card p-3 mb-3">
-          <div class="small text-uppercase text-muted fw-semibold mb-2">Stift Feinabgleich (wird erst beim nächsten
-            Pen-Up/Pen-Down übernommen)</div>
-
+          <div class="small text-uppercase text-muted fw-semibold mb-2">Stift Servo</div>
           <label for="drawPenDownSlider" class="form-label mb-1">
             Pen-DOWN (0..80): <strong id="drawPenDownValue">80</strong>
           </label>
           <input type="range" class="form-range" min="0" max="80" step="1" id="drawPenDownSlider">
-
           <label for="drawPenUpSlider" class="form-label mt-3 mb-1">
             Pen-UP (0..80): <strong id="drawPenUpValue">80</strong>
           </label>
           <input type="range" class="form-range" min="0" max="80" step="1" id="drawPenUpSlider">
-
-          <div class="small text-muted mt-2">
-            Änderungen sind vorgemerkt und werden automatisch beim nächsten Übergang angewendet.
-          </div>
+          <div class="small text-muted mt-2"></div>
         </div>
       </div>
     </div>
 
     <!-- FOOTER -->
     <div class="mt-5">
-      <h6 class="m-0">MANIAC Version v10.0.04</h6>
+      <h6 class="m-0">MANIAC Version v11.0.04</h6>
     </div>
 
   </main>
@@ -1182,6 +1176,43 @@
 
 
   <script src="svgBatch.js"></script>
+
+
+    <!-- JOB FINISHED MODAL -->
+    <div id="jobFinishedModal" class="job-finished-modal" style="display:none;">
+      <div class="job-finished-backdrop"></div>
+      <div class="job-finished-card">
+        <h4 class="mb-2">Fertig gemalt.</h4>
+        <div class="text-muted mb-3" id="jobFinishedText">Nächstes SVG auswählen?</div>
+        <div class="d-grid gap-2">
+          <button class="btn btn-lg btn-primary" id="jobFinishedChooseNext">Nächstes SVG auswählen</button>
+          <button class="btn btn-lg btn-secondary" id="jobFinishedClose">Schließen</button>
+        </div>
+      </div>
+    </div>
+
+
+  <!-- PNG Layer Modal (Outlines / Fill with color change) -->
+  <div class="modal fade" id="pngLayerModal" tabindex="-1" aria-labelledby="pngLayerModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+      <div class="modal-content tools-modal shadow-sm">
+        <div class="modal-header tools-modal-header">
+          <div>
+            <h5 class="modal-title mb-0" id="pngLayerModalLabel">Farbwechsel</h5>
+            <div class="small text-muted">PNG-Layer</div>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div id="pngLayerModalText" class="fs-5">Bitte Farbe wechseln…</div>
+          <div class="small text-muted mt-2">Wenn der Stift gewechselt ist, auf „Weiter“ drücken.</div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-primary" id="pngLayerModalContinue">Weiter</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
 </body>
 

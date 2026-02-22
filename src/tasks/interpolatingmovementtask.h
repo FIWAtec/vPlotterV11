@@ -8,12 +8,13 @@ class InterpolatingMovementTask : public Task {
 private:
     Movement* movement;
     Movement::Point target;
+    int speedSteps;
     bool started = false;
 
 public:
     static const char* NAME;
 
-    InterpolatingMovementTask(Movement* movement, Movement::Point target);
+    InterpolatingMovementTask(Movement* movement, Movement::Point target, int speedSteps);
 
     bool isDone() override;
     void startRunning() override;

@@ -412,3 +412,133 @@ export async function buildCrassSvgFromPng(file, selectedHexColors, options = {}
 ${layerSvgs.join("\n")}
 </svg>`;
 }
+
+
+/**
+ * Build a PNG job queue:
+ *  1) One OUTLINES SVG (all selected colors combined, stroke-only)
+ *  2) One FILL SVG per color (hatch-only)
+ *
+ * All "mm" options are converted to SVG units using safeWidthMm (from /getState),
+ * so result stays stable even if topDistance changes.
+ */
+export async function buildPngOutlineAndFillJob(file, selectedHexColors, options = {}) {
+  const tolerance = options.tolerance ?? 90;
+  const turdSize = options.turdSize ?? 12;
+
+  // Physical mm settings (defaults: 1mm pen)
+  const penWidthMm = Number(options.penWidthMm ?? 1.0);
+  const fillStepMm = Number(options.fillStepMm ?? 1.0);
+  const hatchAngle = Number(options.hatchAngle ?? 35);
+
+  // Plotter geometry (mm)
+  const safeWidthMm = Number(options.safeWidthMm ?? 0);
+
+  const targetsRaw = (selectedHexColors || []).map(hexToRgb).filter(Boolean);
+
+  // Sort light -> dark (so you can paint bright first)
+  const targets = targetsRaw
+    .map(t => ({ ...t, lum: (0.2126*t.r + 0.7152*t.g + 0.0722*t.b) }))
+    .sort((a,b)=>a.lum-b.lum);
+
+  if (targets.length === 0) {
+    return { width: 10, height: 10, queue: [] };
+  }
+
+  // Use first mask to get consistent W/H + unit conversion
+  const first = await buildMaskImageData(file, targets[0], tolerance, 1600);
+  const W = first.width, H = first.height;
+
+  // Convert mm -> SVG units using width only (stable enough for our usage)
+  const unitsPerMm = (safeWidthMm > 1) ? (W / safeWidthMm) : 1.0;
+  const penWidth = clamp(penWidthMm * unitsPerMm, 0.2, 12);
+  const fillStep  = clamp(fillStepMm  * unitsPerMm, 1, 24);
+
+  // --- 1) OUTLINES (combined) ---
+  const outlineDs = [];
+  for (const t of targets) {
+    const { mask } = await buildMaskImageData(file, t, tolerance, 1600);
+    const vecSvg = await vectorizeMaskToSvg(mask, turdSize);
+    const ds = extractPathDs(vecSvg);
+    for (const d of ds) outlineDs.push(d);
+  }
+
+  const outlinePaths = outlineDs.map(d => (
+    `<path d="${d}"
+      fill="none"
+      stroke="#000"
+      stroke-width="${penWidth}"
+      stroke-linejoin="round"
+      stroke-linecap="round" />`
+  )).join("\n");
+
+  const outlinesSvg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="${W}" height="${H}"
+     viewBox="0 0 ${W} ${H}">
+  <g data-layer="OUTLINES">
+    ${outlinePaths}
+  </g>
+</svg>`;
+
+  // --- 2) FILL (per color) ---
+  const fills = [];
+  for (const t of targets) {
+    const { mask } = await buildMaskImageData(file, t, tolerance, 1600);
+
+    const hatch = hatchSegmentsFromMask(mask, fillStep, hatchAngle);
+
+    // chunk hatch segments
+    const chunkSize = 1800;
+    const hatchPaths = [];
+    for (let i = 0; i < hatch.length; i += chunkSize) {
+      const chunk = hatch.slice(i, i + chunkSize);
+      const dstr = chunk
+        .map(s => `M ${s.x1.toFixed(2)} ${s.y1.toFixed(2)} L ${s.x2.toFixed(2)} ${s.y2.toFixed(2)}`)
+        .join(" ");
+      hatchPaths.push(
+        `<path d="${dstr}"
+          fill="none"
+          stroke="#000"
+          stroke-width="${penWidth}"
+          stroke-linecap="round"
+          stroke-linejoin="round" />`
+      );
+    }
+
+    const hex = rgbToHex(t.r, t.g, t.b);
+    const fillSvg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="${W}" height="${H}"
+     viewBox="0 0 ${W} ${H}">
+  <g data-layer="${hex}">
+    <!-- FILL ${hex} -->
+    ${hatchPaths.join("\n")}
+  </g>
+</svg>`;
+
+    fills.push({ hex, svg: fillSvg });
+  }
+
+  // Build queue: outlines first, then fills light->dark
+  const queue = [];
+  queue.push({
+    kind: "outlines",
+    name: "png_outlines.svg",
+    label: "Outlines",
+    prompt: null,
+    svg: outlinesSvg
+  });
+
+  for (const f of fills) {
+    queue.push({
+      kind: "fill",
+      name: `png_fill_${f.hex.replace("#","")}.svg`,
+      label: f.hex,
+      prompt: `Farbe wechseln: ${f.hex}`,
+      svg: f.svg
+    });
+  }
+
+  return { width: W, height: H, queue, unitsPerMm };
+}
