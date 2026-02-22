@@ -52,26 +52,22 @@ class Movement {
    public:
 
     struct PlannerConfig {
-        // Cornering and lookahead related knobs
-        double junctionDeviationMM;   // 0.01 .. 1.0 typical
-        int lookaheadSegments;        // 1 .. 128
-        int minSegmentTimeMs;         // 0 .. 50
-        double cornerSlowdown;        // 0..1 , lower => stronger corner slow-down
-        double minCornerFactor;       // minimal speed factor in very sharp corners
+        double junctionDeviationMM;   
+        int lookaheadSegments;       
+        int minSegmentTimeMs;       
+        double cornerSlowdown;       
+        double minCornerFactor;      
 
-        // Geometry based dynamic feed and filters
-        double minSegmentLenMM;       // tiny segments can be skipped/merged by runner
-        double collinearDeg;          // merge threshold in degrees
+        double minSegmentLenMM;     
+        double collinearDeg;        
 
-        // Backlash compensation in mm
         double backlashXmm;
         double backlashYmm;
 
-        // S-curve style soften factor (0..1), practical approximation on top of AccelStepper
         double sCurveFactor;
 
         PlannerConfig() :
-            junctionDeviationMM(0.08),
+            junctionDeviationMM(0.02),
             lookaheadSegments(48),
             minSegmentTimeMs(3),
             cornerSlowdown(0.55),

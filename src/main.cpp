@@ -973,8 +973,8 @@ void setup()
   loadEnablePinsFromPrefs(leftEnPin, rightEnPin);
   if (movement) movement->setEnablePins(leftEnPin, rightEnPin);
 
-  int storedPulseL = prefs.getInt(PREF_KEY_PULSE_L, 2);
-  int storedPulseR = prefs.getInt(PREF_KEY_PULSE_R, 2);
+  int storedPulseL = prefs.getInt(PREF_KEY_PULSE_L, 5);
+  int storedPulseR = prefs.getInt(PREF_KEY_PULSE_R, 5);
   int storedPenDown = prefs.getInt(PREF_KEY_PEN_DOWN, 80);
   int storedPenUp   = prefs.getInt(PREF_KEY_PEN_UP, PEN_START_POS);
   if (movement) movement->setPulseWidths(storedPulseL, storedPulseR);
