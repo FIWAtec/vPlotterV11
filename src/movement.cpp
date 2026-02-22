@@ -186,12 +186,14 @@ double Movement::solveTorqueEquilibrium(const double phi_L, const double phi_R, 
     double gamma_best = 99999999;
     double T_delta_best = 99999999;
 
-    constexpr double gamma_step = 0.20 * PI / 180.0;
+    // Smaller step improves straightness when many tiny XY segments are executed
+    constexpr double gamma_step = 0.05 * PI / 180.0;
     constexpr double gamma_min = -90.0 * PI / 180.0;
     constexpr double gamma_max = 90.0 * PI / 180.0;
     constexpr double gamma_search_window = 2.0 * PI / 180.0;
 
-    for (double gamma = gamma_init - gamma_search_window; gamma > gamma_min && gamma < gamma_max && gamma <= gamma_init + gamma_search_window; gamma += gamma_step) {
+    // Scan full window and pick best. Do NOT early-return on first "worse" sample.
+    for (double gamma = gamma_init - gamma_search_window; gamma >= gamma_min && gamma <= gamma_max && gamma <= gamma_init + gamma_search_window; gamma += gamma_step) {
         const double alpha = phi_L - gamma;
         const double beta = phi_R + gamma;
 
@@ -205,11 +207,9 @@ double Movement::solveTorqueEquilibrium(const double phi_L, const double phi_R, 
 
         const double T_delta = T_R - T_L + T_m;
 
-        if (abs(T_delta) < abs(T_delta_best)) {
+        if (fabs(T_delta) < fabs(T_delta_best)) {
             T_delta_best = T_delta;
             gamma_best = gamma;
-        } else {
-            return gamma_best;
         }
     }
     return gamma_best;
