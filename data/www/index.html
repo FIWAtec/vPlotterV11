@@ -314,8 +314,8 @@
         </div>
 
         <div class="card p-3 mb-3">
-          <div class="small text-uppercase text-muted fw-semibold mb-2">Stift Feinabgleich (wird erst beim nächsten
-            Pen-Up/Pen-Down übernommen)</div>
+          <div class="small text-uppercase text-muted fw-semibold mb-2">
+            </div>
 
           <label for="drawPenDownSlider" class="form-label mb-1">
             Pen-DOWN (0..80): <strong id="drawPenDownValue">80</strong>
@@ -328,7 +328,6 @@
           <input type="range" class="form-range" min="0" max="80" step="1" id="drawPenUpSlider">
 
           <div class="small text-muted mt-2">
-            Änderungen sind vorgemerkt und werden automatisch beim nächsten Übergang angewendet.
           </div>
         </div>
       </div>
@@ -336,7 +335,7 @@
 
     <!-- FOOTER -->
     <div class="mt-5">
-      <h6 class="m-0">MANIAC Version v10.0.04</h6>
+      <h6 class="m-0">MANIAC Version v12.0.04</h6>
     </div>
 
   </main>
@@ -515,7 +514,109 @@
               </div>
             </section>
 
-            <!-- SECTION: FRONTEND PERFORMANCE -->
+            
+            <!-- SECTION: PLANNER (QUALITY / SPEED) -->
+            <section class="tools-section mt-4" id="toolsSecPlanner">
+              <div class="section-title d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+                <div>
+                  <div class="small text-uppercase text-muted fw-semibold">Tuning</div>
+                  <h6 class="mb-0 fw-semibold">Planner (Schnell ↔ Qualität)</h6>
+                </div>
+                <span class="badge bg-secondary">Live</span>
+              </div>
+
+              <div class="card glass-card p-3">
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="fw-semibold">Gesamtprofil</div>
+                  <span class="badge bg-light text-dark" id="plannerProfileLabel">Custom</span>
+                </div>
+                <div class="text-muted small mb-2">
+                  Ein Slider steuert alle Planner-Werte gleichzeitig. Danach kannst du jeden Wert einzeln feinjustieren.
+                </div>
+
+                <label class="form-label d-flex justify-content-between align-items-center mb-1">
+                  <span>Schnell</span>
+                  <span>Qualität</span>
+                </label>
+                <input id="plannerMaster" type="range" class="form-range" min="0" max="100" step="1" value="70">
+
+                <div class="row g-3 mt-2">
+
+                  <div class="col-12 col-md-6">
+                    <label class="form-label mb-1">Junction Deviation (mm)</label>
+                    <input id="plJunctionDeviation" type="number" class="form-control" step="0.001" min="0.001" max="0.5">
+                    <div class="text-muted small">Kleiner = präziser (weniger Eckenrundung), aber langsamer/ruckelanfälliger.</div>
+                  </div>
+
+                  <div class="col-12 col-md-6">
+                    <label class="form-label mb-1">Lookahead Segments</label>
+                    <input id="plLookahead" type="number" class="form-control" step="1" min="8" max="200">
+                    <div class="text-muted small">Mehr = bessere Vorschau (saubere Geschwindigkeit über Ecken), aber mehr Rechenlast.</div>
+                  </div>
+
+                  <div class="col-12 col-md-6">
+                    <label class="form-label mb-1">Min Segment Time (ms)</label>
+                    <input id="plMinSegMs" type="number" class="form-control" step="1" min="1" max="20">
+                    <div class="text-muted small">Höher = stabiler bei Mini-Segmenten, aber kann die Max-Speed begrenzen.</div>
+                  </div>
+
+                  <div class="col-12 col-md-6">
+                    <label class="form-label mb-1">Min Segment Length (mm)</label>
+                    <input id="plMinSegLen" type="number" class="form-control" step="0.01" min="0.02" max="2.0">
+                    <div class="text-muted small">Kleiner = mehr Detail/Präzision, aber mehr Segmente und Rechenzeit.</div>
+                  </div>
+
+                  <div class="col-12 col-md-6">
+                    <label class="form-label mb-1">Corner Slowdown</label>
+                    <input id="plCornerSlowdown" type="number" class="form-control" step="0.01" min="0.10" max="1.00">
+                    <div class="text-muted small">Wie stark an Ecken verlangsamt wird. Niedriger = sauberere Ecken, aber langsamer.</div>
+                  </div>
+
+                  <div class="col-12 col-md-6">
+                    <label class="form-label mb-1">Min Corner Factor</label>
+                    <input id="plMinCorner" type="number" class="form-control" step="0.01" min="0.05" max="1.00">
+                    <div class="text-muted small">Untergrenze der Eck-Geschwindigkeit. Niedriger = bessere Kanten, aber mehr Zeit.</div>
+                  </div>
+
+                  <div class="col-12 col-md-6">
+                    <label class="form-label mb-1">Collinear Threshold (deg)</label>
+                    <input id="plCollinear" type="number" class="form-control" step="0.1" min="0.5" max="15">
+                    <div class="text-muted small">Kleiner = weniger „Zusammenfassen“ fast gerader Linien (mehr Präzision).</div>
+                  </div>
+
+                  <div class="col-12 col-md-6">
+                    <label class="form-label mb-1">S-Curve Factor</label>
+                    <input id="plSCurve" type="number" class="form-control" step="0.01" min="0.0" max="1.0">
+                    <div class="text-muted small">Höher = weicheres Beschleunigen/Bremsen (ruhiger), aber weniger „snappy“.</div>
+                  </div>
+
+                  <div class="col-12 col-md-6">
+                    <label class="form-label mb-1">Backlash X (mm)</label>
+                    <input id="plBacklashX" type="number" class="form-control" step="0.01" min="0.0" max="5.0">
+                    <div class="text-muted small">Nur nutzen, wenn mechanisches Spiel messbar ist. Sonst 0.</div>
+                  </div>
+
+                  <div class="col-12 col-md-6">
+                    <label class="form-label mb-1">Backlash Y (mm)</label>
+                    <input id="plBacklashY" type="number" class="form-control" step="0.01" min="0.0" max="5.0">
+                    <div class="text-muted small">Nur nutzen, wenn mechanisches Spiel messbar ist. Sonst 0.</div>
+                  </div>
+
+                </div>
+
+                <div class="d-flex gap-2 mt-3">
+                  <button id="btnLoadPlanner" class="btn btn-outline-primary flex-fill" type="button">Laden</button>
+                  <button id="btnSavePlanner" class="btn btn-primary flex-fill" type="button">Speichern</button>
+                </div>
+
+                <div class="text-muted small mt-2">
+                  Hinweis: Gespeichert wird in Preferences. Nach Neustart bleiben die Werte aktiv.
+                </div>
+              </div>
+            </section>
+
+
+<!-- SECTION: FRONTEND PERFORMANCE -->
             <section class="tools-section mt-4" id="toolsSecUiPerf">
               <div class="section-title d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
                 <div>

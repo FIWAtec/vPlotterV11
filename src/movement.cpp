@@ -332,7 +332,6 @@ const auto lengths = getBeltLengths(tx, ty);
 
     if (targetSpeed < 1.0) targetSpeed = 1.0;
 
-    // Approximate S-curve by lowering accel around corners
 double accelScale = 1.0 - ((1.0 - cornerFactor) * plannerCfg.sCurveFactor);
 if (accelScale < 0.2) accelScale = 0.2;
 
@@ -350,8 +349,6 @@ rightMotor->enableOutputs();
 leftMotor->setMaxSpeed(leftSpeed);
 rightMotor->setMaxSpeed(rightSpeed);
 
-// Sync ramp time: acceleration proportional to each motor's vmax.
-// This keeps ratio of speeds stable during accel/decel and improves straightness.
 const float refV = (float)targetSpeed;
 float aL = localAccelBase;
 float aR = localAccelBase;
@@ -460,19 +457,15 @@ void Movement::setEnablePins(int leftEnablePin, int rightEnablePin) {
 int Movement::getLeftEnablePin() const { return _leftEnablePin; }
 int Movement::getRightEnablePin() const { return _rightEnablePin; }
 
-void Movement::setPulseWidths(int leftUs, int rightUs) {
-  if (leftUs < 1) leftUs = 1;
-  if (rightUs < 1) rightUs = 1;
-  if (leftUs > 1000) leftUs = 1000;
-  if (rightUs > 1000) rightUs = 1000;
+void Movement::setPulseWidths(int /*leftUs*/, int /*rightUs*/) {
+  // Fixed pulse width for stability. Do not make this configurable at runtime.
+  const int us = FIXED_PULSE_US;
 
-  _leftPulseWidthUs = leftUs;
-  _rightPulseWidthUs = rightUs;
+  _leftPulseWidthUs = us;
+  _rightPulseWidthUs = us;
 
-  if (leftMotor) leftMotor->setMinPulseWidth(_leftPulseWidthUs);
-  if (rightMotor) rightMotor->setMinPulseWidth(_rightPulseWidthUs);
-
-  WebLog::info("Pulse widths updated: left=" + String(_leftPulseWidthUs) + "us right=" + String(_rightPulseWidthUs) + "us");
+  if (leftMotor) leftMotor->setMinPulseWidth(us);
+  if (rightMotor) rightMotor->setMinPulseWidth(us);
 }
 
 int Movement::getLeftPulseWidthUs() const { return _leftPulseWidthUs; }

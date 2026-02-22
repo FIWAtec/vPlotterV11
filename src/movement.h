@@ -25,18 +25,18 @@ static inline int mmToSteps(double mm) { return int((mm / travelPerRotationMM())
 static inline double stepsToMM(int steps) { return (double(steps) / double(stepsPerRotation)) * travelPerRotationMM(); }
 
 constexpr double midPulleyToWall = 41.0;
-constexpr float homedStepOffsetMM = 40.0;
+constexpr float homedStepOffsetMM = 20.0;
 
 static inline int homedStepsOffsetSteps() { return mmToSteps(homedStepOffsetMM); }
 
-constexpr double mass_bot = 1.0;
+constexpr double mass_bot = 1.5;
 constexpr double g_constant = 9.81;
 
 constexpr double d_t = 76.027;
 constexpr double d_p = 4.4866;
 constexpr double d_m = 10.0 + d_p;
 
-constexpr double belt_elongation_coefficient = 0.0; // disabled: test straightness without stretch model
+constexpr double belt_elongation_coefficient = 0.0; 
 
 constexpr int HOME_Y_OFFSET_MM = 340;
 constexpr double safeYFraction = 0.2;
@@ -137,7 +137,7 @@ class Movement {
 
    private:
 
-    static constexpr int FIXED_PULSE_US = 5;
+    static constexpr int FIXED_PULSE_US = 10;
 
     int _leftEnablePin  = -1;
     int _rightEnablePin = -1;
