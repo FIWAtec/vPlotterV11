@@ -973,11 +973,12 @@ void setup()
   loadEnablePinsFromPrefs(leftEnPin, rightEnPin);
   if (movement) movement->setEnablePins(leftEnPin, rightEnPin);
 
-  int storedPulseL = prefs.getInt(PREF_KEY_PULSE_L, 10);
-  int storedPulseR = prefs.getInt(PREF_KEY_PULSE_R, 10);
+  int storedPulseL = prefs.getInt(PREF_KEY_PULSE_L, 2);
+  int storedPulseR = prefs.getInt(PREF_KEY_PULSE_R, 2);
   int storedPenDown = prefs.getInt(PREF_KEY_PEN_DOWN, 80);
   int storedPenUp   = prefs.getInt(PREF_KEY_PEN_UP, PEN_START_POS);
   if (movement) movement->setPulseWidths(storedPulseL, storedPulseR);
+  WebLog::info(String("Loaded pulse widths: left=") + storedPulseL + "us right=" + storedPulseR + "us");
 
   int storedPrint = prefs.getInt("printSpeed", 1200);
   int storedMove  = prefs.getInt("moveSpeed", 2000);
@@ -987,6 +988,7 @@ void setup()
   long storedAccel    = prefs.getLong("accel",    999999999L);
   movement->setMotionTuning(storedInfSteps, storedAccel);
 
+  WebLog::log(LOG_INFO, "Loaded tuning: infSteps=" + String(storedInfSteps) + " accel=" + String(storedAccel));
   WebLog::log(LOG_INFO, "Loaded speeds: print=" + String(storedPrint) + " move=" + String(storedMove));
 
   Movement::PlannerConfig cfg = movement->getPlannerConfig();

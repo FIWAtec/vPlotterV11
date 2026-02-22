@@ -314,23 +314,29 @@
         </div>
 
         <div class="card p-3 mb-3">
-          <div class="small text-uppercase text-muted fw-semibold mb-2">Stift Servo</div>
+          <div class="small text-uppercase text-muted fw-semibold mb-2">Stift Feinabgleich (wird erst beim nächsten
+            Pen-Up/Pen-Down übernommen)</div>
+
           <label for="drawPenDownSlider" class="form-label mb-1">
             Pen-DOWN (0..80): <strong id="drawPenDownValue">80</strong>
           </label>
           <input type="range" class="form-range" min="0" max="80" step="1" id="drawPenDownSlider">
+
           <label for="drawPenUpSlider" class="form-label mt-3 mb-1">
             Pen-UP (0..80): <strong id="drawPenUpValue">80</strong>
           </label>
           <input type="range" class="form-range" min="0" max="80" step="1" id="drawPenUpSlider">
-          <div class="small text-muted mt-2"></div>
+
+          <div class="small text-muted mt-2">
+            Änderungen sind vorgemerkt und werden automatisch beim nächsten Übergang angewendet.
+          </div>
         </div>
       </div>
     </div>
 
     <!-- FOOTER -->
     <div class="mt-5">
-      <h6 class="m-0">MANIAC Version v11.0.04</h6>
+      <h6 class="m-0">MANIAC Version v10.0.04</h6>
     </div>
 
   </main>

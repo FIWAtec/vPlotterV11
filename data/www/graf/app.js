@@ -230,8 +230,18 @@
       const c1 = worldToScreen(a.paint.x+a.paint.w,a.paint.y+a.paint.h);
       const rx=c0.x, ry=c0.y, rw=c1.x-c0.x, rh=c1.y-c0.y;
 
+      ctx.fillStyle='rgba(90,206,255,0.40)';
+      ctx.fillRect(rx,ry,rw,rh);
 
+      ctx.lineWidth=2;
+      ctx.strokeStyle='rgba(89,165,255,0.95)';
+      ctx.strokeRect(rx,ry,rw,rh);
 
+      // label
+      const compact = c.clientWidth < 900;
+      ctx.font = compact ? '600 12px system-ui' : 'bold 14px system-ui';
+      ctx.fillStyle='rgba(0,0,0,0.70)';
+      ctx.fillText(`Bereich ${a.i+1}`, rx+8, ry+(compact ? 18 : 22));
 
       // belt V hints
       drawBeltV(a.anchorL.x,a.anchorL.y, a.paint.x+a.paint.w/2, a.paint.y+a.paint.h*0.35, '#5edbff');
@@ -414,91 +424,7 @@
     a.click();
   }
 
-    function downloadTextFile(filename, text){
-    const blob = new Blob([text], {type: 'text/plain;charset=utf-8'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.download = filename;
-    a.href = url;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-  }
-
-  function exportSplitSettingsTxt(outW, outH, pxPerMM){
-    const now = new Date().toISOString();
-
-    const lines = [];
-    lines.push(`# Export Settings`);
-    lines.push(`timestamp=${now}`);
-    lines.push(`imgBaseName=${state.imgBaseName}`);
-
-    // input/state values
-    lines.push(`wallW=${state.wallW}`);
-    lines.push(`wallH=${state.wallH}`);
-    lines.push(`topD=${state.topD}`);
-    lines.push(`nAreas=${state.nAreas}`);
-    lines.push(`safeXFrac=${state.safeXFrac}`);
-    lines.push(`safeYFrac=${state.safeYFrac}`);
-    lines.push(`holeFromFloor=${state.holeFromFloor}`);
-    lines.push(`startX=${state.startX}`);
-
-    lines.push(`imgAlpha=${state.imgAlpha}`);
-    lines.push(`lockAspect=${state.lockAspect ? 1 : 0}`);
-    lines.push(`imgX=${state.imgX}`);
-    lines.push(`imgY=${state.imgY}`);
-    lines.push(`imgW=${state.imgW}`);
-    lines.push(`imgH=${state.imgH}`);
-    lines.push(`scaleStepPct=${state.scaleStepPct}`);
-    lines.push(`moveStepMm=${state.moveStepMm}`);
-
-    // computed values
-    lines.push(`safeX=${state.safeX}`);
-    lines.push(`safeY=${state.safeY}`);
-    lines.push(`paintW=${state.paintW}`);
-    lines.push(`paintH=${state.paintH}`);
-    lines.push(`paintY=${state.paintY}`);
-
-    // export settings
-    lines.push(`export_pxPerMM=${pxPerMM}`);
-    lines.push(`export_outW_px=${outW}`);
-    lines.push(`export_outH_px=${outH}`);
-
-    // image meta
-    if(state.img){
-      lines.push(`imgPixelW=${state.img.width}`);
-      lines.push(`imgPixelH=${state.img.height}`);
-      lines.push(`imgAspect=${state.imgAspect}`);
-    } else {
-      lines.push(`imgPixelW=0`);
-      lines.push(`imgPixelH=0`);
-      lines.push(`imgAspect=0`);
-    }
-
-    // areas and anchors
-    lines.push(``);
-    lines.push(`[AREAS]`);
-    for(const a of state.areas){
-      lines.push(
-        `area_${a.i+1}.paint.x=${a.paint.x}; area_${a.i+1}.paint.y=${a.paint.y}; area_${a.i+1}.paint.w=${a.paint.w}; area_${a.i+1}.paint.h=${a.paint.h}`
-      );
-      lines.push(
-        `area_${a.i+1}.anchorL.x=${a.anchorL.x}; area_${a.i+1}.anchorL.yTop=${a.anchorL.y}`
-      );
-      lines.push(
-        `area_${a.i+1}.anchorR.x=${a.anchorR.x}; area_${a.i+1}.anchorR.yTop=${a.anchorR.y}`
-      );
-    }
-
-    // holes list as shown in UI
-    lines.push(``);
-    lines.push(`[HOLES]`);
-    for(const h of state.holes){
-      lines.push(`${h.tag}; x=${h.x}; yFloor=${h.yFloor}; yTop=${h.yTop}`);
-    }
-
-    const filename = `${state.imgBaseName}__bereiche_export_settings.txt`;
-    downloadTextFile(filename, lines.join('\n'));
-  }
+  
   
   function moveImage(dx, dy) {
     // Move image in world-mm coordinates
@@ -532,52 +458,50 @@ function scaleImageAxis(axis, dir) {
     draw();
   }
 
-  function exportSplit(){
+function exportSplit(){
     const pxPerMM = 1.0;
-    const outW = Math.round(state.paintW * pxPerMM);
-    const outH = Math.round(state.paintH * pxPerMM);
+    const outW = Math.round(state.paintW*pxPerMM);
+    const outH = Math.round(state.paintH*pxPerMM);
 
-    // 1) settings + all computed values as extra TXT export (once)
-    exportSplitSettingsTxt(outW, outH, pxPerMM);
-
-    // 2) export each area as pure crop (NO border, NO label, NO extra lines)
     for(const a of state.areas){
-      const oc = document.createElement('canvas');
-      oc.width = outW; 
-      oc.height = outH;
-
-      const ox = oc.getContext('2d');
+      const oc=document.createElement('canvas');
+      oc.width=outW; oc.height=outH;
+      const ox=oc.getContext('2d');
       ox.clearRect(0,0,outW,outH);
 
       if(state.img){
-        const pr = a.paint;
+        const pr=a.paint;
+        const ix0 = (pr.x - state.imgX)/state.imgW * state.img.width;
+        const iy0 = (pr.y - state.imgY)/state.imgH * state.img.height;
+        const ix1 = (pr.x+pr.w - state.imgX)/state.imgW * state.img.width;
+        const iy1 = (pr.y+pr.h - state.imgY)/state.imgH * state.img.height;
 
-        // map paint-rect in world-mm to image pixel coordinates
-        const ix0 = (pr.x - state.imgX) / state.imgW * state.img.width;
-        const iy0 = (pr.y - state.imgY) / state.imgH * state.img.height;
-        const ix1 = (pr.x + pr.w - state.imgX) / state.imgW * state.img.width;
-        const iy1 = (pr.y + pr.h - state.imgY) / state.imgH * state.img.height;
+        const sx=clamp(ix0,0,state.img.width);
+        const sy=clamp(iy0,0,state.img.height);
+        const sw=clamp(ix1,0,state.img.width)-sx;
+        const sh=clamp(iy1,0,state.img.height)-sy;
 
-        // clamp to image bounds
-        const sx = clamp(ix0, 0, state.img.width);
-        const sy = clamp(iy0, 0, state.img.height);
-        const sw = clamp(ix1, 0, state.img.width) - sx;
-        const sh = clamp(iy1, 0, state.img.height) - sy;
+        const dx=Math.round((sx-ix0)/(ix1-ix0)*outW);
+        const dy=Math.round((sy-iy0)/(iy1-iy0)*outH);
+        const dw=Math.round(sw/(ix1-ix0)*outW);
+        const dh=Math.round(sh/(iy1-iy0)*outH);
 
-        // destination rect for partially clamped source
-        const dx = Math.round((sx - ix0) / (ix1 - ix0) * outW);
-        const dy = Math.round((sy - iy0) / (iy1 - iy0) * outH);
-        const dw = Math.round(sw / (ix1 - ix0) * outW);
-        const dh = Math.round(sh / (iy1 - iy0) * outH);
-
-        if(sw > 1 && sh > 1) {
-          ox.drawImage(state.img, sx, sy, sw, sh, dx, dy, dw, dh);
-        }
+        if(sw>1 && sh>1) ox.drawImage(state.img, sx,sy,sw,sh, dx,dy,dw,dh);
       }
 
-      const link = document.createElement('a');
+      // border + label
+      ox.strokeStyle='rgba(30,80,255,0.95)';
+      ox.lineWidth=4;
+      ox.strokeRect(0,0,outW,outH);
+      ox.fillStyle='rgba(0,0,0,0.6)';
+      ox.fillRect(10,10,220,34);
+      ox.fillStyle='#fff';
+      ox.font='bold 18px system-ui';
+      ox.fillText(`Bereich ${a.i+1}`,20,34);
+
+      const link=document.createElement('a');
       link.download = `${state.imgBaseName}__bereich_${String(a.i+1).padStart(2,'0')}.png`;
-      link.href = oc.toDataURL('image/png');
+      link.href=oc.toDataURL('image/png');
       link.click();
     }
   }

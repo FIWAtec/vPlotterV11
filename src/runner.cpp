@@ -46,6 +46,7 @@ void Runner::initTaskProvider() {
     sequenceIx = 0;
     lookaheadQ.clear();
     eofReached = false;
+    penIsDown = false;
 
     if (openedFile) openedFile.close();
 
@@ -66,7 +67,6 @@ void Runner::initTaskProvider() {
 
     skippedDistance = 0.0;
     bool penDown = false;
-    penDownState = penDown;
     Movement::Point virtualPos = startPosition;
 
     size_t consumed = 0;
@@ -110,13 +110,12 @@ void Runner::initTaskProvider() {
             startPosition = virtualPos;
         }
 
-        if (penDown) prefaceSequence[prefaceCount++] = new PenTask(false, pen);
+        if (penDown) { prefaceSequence[prefaceCount++] = new PenTask(false, pen); penIsDown = true; }
     }
 
     Movement::Point home = movement->getHomeCoordinates();
     finishingSequence[0] = new PenTask(true, pen);
     finishingSequence[1] = new InterpolatingMovementTask(movement, home, moveSpeedSteps);
-
 }
 
 bool Runner::fillLookaheadQueue() {
@@ -222,14 +221,13 @@ Task *Runner::getNextTask() {
 
     if (cmd.type == QueuedCommand::Pen) {
         currentTaskCountsDistance = false;
-        penDownState = cmd.penDown;
+        penIsDown = cmd.penDown;
         return cmd.penDown ? (Task*)new PenTask(false, pen) : (Task*)new PenTask(true, pen);
     }
 
     targetPosition = cmd.p;
     currentTaskCountsDistance = true;
-    const int speedSteps = penDownState ? printSpeedSteps : moveSpeedSteps;
-    return new InterpolatingMovementTask(movement, targetPosition, speedSteps);
+    return new InterpolatingMovementTask(movement, targetPosition, penIsDown ? printSpeedSteps : moveSpeedSteps);
 }
 
 void Runner::run() {

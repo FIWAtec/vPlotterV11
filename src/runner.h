@@ -20,16 +20,12 @@ private:
         QueuedCommand(Movement::Point pt) : type(Move), penDown(false), p(pt) {}
     };
 
-    bool penDownState = false;
-
     Movement *movement;
     Pen *pen;
     Display *display;
 
     void initTaskProvider();
     Task* getNextTask();
-
-
 
     bool fillLookaheadQueue();
     void optimizeLookaheadQueue();
@@ -67,6 +63,9 @@ private:
 
     std::deque<QueuedCommand> lookaheadQ;
     bool eofReached = false;
+
+    // Track current pen state so we can select moveSpeedSteps vs printSpeedSteps.
+    bool penIsDown = false;
 
 public:
     Runner(Movement *movement, Pen *pen, Display *display);
