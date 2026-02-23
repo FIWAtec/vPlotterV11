@@ -991,7 +991,7 @@ void setup()
 
   int storedPulseL = prefs.getInt(PREF_KEY_PULSE_L, 2);
   int storedPulseR = prefs.getInt(PREF_KEY_PULSE_R, 2);
-  int storedPenDown = prefs.getInt(PREF_KEY_PEN_DOWN, 80);
+  int storedPenDown = prefs.getInt(PREF_KEY_PEN_DOWN, 70);
   int storedPenUp   = prefs.getInt(PREF_KEY_PEN_UP, PEN_START_POS);
   if (movement) movement->setPulseWidths(storedPulseL, storedPulseR);
   WebLog::info(String("Loaded pulse widths: left=") + storedPulseL + "us right=" + storedPulseR + "us");
@@ -1314,7 +1314,7 @@ void setup()
     if (!pen) { request->send(500, "text/plain", "pen not ready"); return; }
     if (!request->hasParam("value", true)) { request->send(400, "text/plain", "missing value"); return; }
     int v = request->getParam("value", true)->value().toInt();
-    v = constrain(v, 0, 80);
+    v = constrain(v, 0, 7);
     pen->setPendingDownAngle(v);
     prefs.putInt(PREF_KEY_PEN_DOWN, v);
     request->send(200, "application/json", String("{\"ok\":true,\"pendingDown\":") + v + "}");
@@ -1324,7 +1324,7 @@ void setup()
     if (!pen) { request->send(500, "text/plain", "pen not ready"); return; }
     if (!request->hasParam("value", true)) { request->send(400, "text/plain", "missing value"); return; }
     int v = request->getParam("value", true)->value().toInt();
-    v = constrain(v, 0, 80);
+    v = constrain(v, 0, 70);
     pen->setPendingUpAngle(v);
     prefs.putInt(PREF_KEY_PEN_UP, v);
     request->send(200, "application/json", String("{\"ok\":true,\"pendingUp\":") + v + "}");

@@ -70,10 +70,10 @@ const liveHud = {
   printSteps: 0,
   penPos: "—",
   penAngle: 0,
-  penDownAngle: 80,
-  penUpAngle: 80,
-  pendingDown: 80,
-  pendingUp: 80,
+  penDownAngle: 70,
+  penUpAngle: 70,
+  pendingDown: 70,
+  pendingUp: 70,
   hasPendingDown: false,
   hasPendingUp: false,
   fwMaxLoopMs: 0
@@ -2461,7 +2461,7 @@ $("#uploadSvg").off("change").on("change", async function () {
   
   // Pen staged sliders (0..80), apply on next transition only
   $("#drawPenDownSlider").on("input change", async function() {
-    const v = Math.max(0, Math.min(80, parseInt(this.value || "0", 10) || 0));
+    const v = Math.max(0, Math.min(70, parseInt(this.value || "0", 10) || 0));
     const t = document.getElementById("drawPenDownValue");
     if (t) t.textContent = String(v);
     try {
@@ -3532,7 +3532,7 @@ function bindServoToolButtons() {
   if (!parkBtn || !homeBtn) return;
 
   setServoToolActive("park");
-  const SERVO_PARK_ANGLE = 80;
+  const SERVO_PARK_ANGLE = 70;
   const SERVO_HOME_ANGLE = 0;
 
   function sendServoAngle(angle) {

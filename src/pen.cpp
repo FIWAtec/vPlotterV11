@@ -58,17 +58,17 @@ void Pen::setPenDistance(int value)
 {
     // Keep old behavior for calibration route compatibility.
     // Requested hard limits: 0..80
-    downAngle = constrain(value, 0, 80);
+    downAngle = constrain(value, 0, 70);
 }
 
 void Pen::setUpAngle(int value)
 {
-    upAngle = constrain(value, 0, 80);
+    upAngle = constrain(value, 0, 70);
 }
 
 void Pen::setDownAngle(int value)
 {
-    downAngle = constrain(value, 0, 80);
+    downAngle = constrain(value, 0, 70);
 }
 
 int Pen::getUpAngle() const
@@ -83,13 +83,13 @@ int Pen::getDownAngle() const
 
 void Pen::setPendingUpAngle(int value)
 {
-    pendingUpAngle = constrain(value, 0, 80);
+    pendingUpAngle = constrain(value, 0, 70);
     hasPendingUp = true;
 }
 
 void Pen::setPendingDownAngle(int value)
 {
-    pendingDownAngle = constrain(value, 0, 80);
+    pendingDownAngle = constrain(value, 0, 70);
     hasPendingDown = true;
 }
 
