@@ -1,0 +1,10 @@
+v14 - FastAccelStepper Migration Patch
+- Added src/stepper_backend.{h,cpp}: backend abstraction for stepper library
+- Movement now uses StepperBackend; can compile with AccelStepper (default) or FastAccelStepper (USE_FAST_ACCELSTEPPER=1)
+- Enable pins routed via configureEnablePin() for both backends
+- FIXED_PULSE_US set to 5 (AccelStepper only). FastAccelStepper does not expose pulse width control; value is ignored there.
+Files changed:
+- src/movement.h (include backend, StepperBackend pointers, FIXED_PULSE_US=5)
+- src/movement.cpp (construct backend, enable pin wiring via configureEnablePin)
+- src/stepper_backend.h (new)
+- src/stepper_backend.cpp (new)

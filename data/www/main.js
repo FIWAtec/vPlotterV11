@@ -1870,177 +1870,6 @@ function init() {
     loadMotionTuning();
   }
 
-  // Planner config: master profile + individual settings (persisted in firmware)
-  const PL_PROFILES = {
-    fast: {
-      junctionDeviation: 0.08,
-      lookaheadSegments: 24,
-      minSegmentTimeMs: 1,
-      cornerSlowdown: 0.85,
-      minCornerFactor: 0.45,
-      minSegmentLenMM: 0.35,
-      collinearDeg: 6.0,
-      sCurveFactor: 0.20,
-    },
-    quality: {
-      junctionDeviation: 0.01,
-      lookaheadSegments: 96,
-      minSegmentTimeMs: 8,
-      cornerSlowdown: 0.35,
-      minCornerFactor: 0.18,
-      minSegmentLenMM: 0.08,
-      collinearDeg: 1.2,
-      sCurveFactor: 0.75,
-    }
-  };
-
-  function lerp(a, b, t) { return a + (b - a) * t; }
-  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
-
-  function plannerSetProfileLabel(text) {
-    const el = document.getElementById("plannerProfileLabel");
-    if (el) el.textContent = text;
-  }
-
-  function plannerReadInputs() {
-    const getNum = (id) => parseFloat(document.getElementById(id)?.value ?? "");
-    const getInt = (id) => parseInt(document.getElementById(id)?.value ?? "", 10);
-
-    return {
-      junctionDeviation: getNum("plJunctionDeviation"),
-      lookaheadSegments: getInt("plLookahead"),
-      minSegmentTimeMs: getInt("plMinSegMs"),
-      cornerSlowdown: getNum("plCornerSlowdown"),
-      minCornerFactor: getNum("plMinCorner"),
-      minSegmentLenMM: getNum("plMinSegLen"),
-      collinearDeg: getNum("plCollinear"),
-      backlashXmm: getNum("plBacklashX"),
-      backlashYmm: getNum("plBacklashY"),
-      sCurveFactor: getNum("plSCurve"),
-    };
-  }
-
-  function plannerWriteInputs(p) {
-    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
-    set("plJunctionDeviation", Number(p.junctionDeviation).toFixed(3));
-    set("plLookahead", Math.round(p.lookaheadSegments));
-    set("plMinSegMs", Math.round(p.minSegmentTimeMs));
-    set("plCornerSlowdown", Number(p.cornerSlowdown).toFixed(2));
-    set("plMinCorner", Number(p.minCornerFactor).toFixed(2));
-    set("plMinSegLen", Number(p.minSegmentLenMM).toFixed(2));
-    set("plCollinear", Number(p.collinearDeg).toFixed(1));
-    set("plBacklashX", Number(p.backlashXmm ?? 0).toFixed(2));
-    set("plBacklashY", Number(p.backlashYmm ?? 0).toFixed(2));
-    set("plSCurve", Number(p.sCurveFactor).toFixed(2));
-  }
-
-  function plannerApplyMaster(t01) {
-    const t = clamp(t01, 0, 1);
-    const f = PL_PROFILES.fast;
-    const q = PL_PROFILES.quality;
-
-    const p = {
-      junctionDeviation: lerp(f.junctionDeviation, q.junctionDeviation, t),
-      lookaheadSegments: Math.round(lerp(f.lookaheadSegments, q.lookaheadSegments, t)),
-      minSegmentTimeMs: Math.round(lerp(f.minSegmentTimeMs, q.minSegmentTimeMs, t)),
-      cornerSlowdown: lerp(f.cornerSlowdown, q.cornerSlowdown, t),
-      minCornerFactor: lerp(f.minCornerFactor, q.minCornerFactor, t),
-      minSegmentLenMM: lerp(f.minSegmentLenMM, q.minSegmentLenMM, t),
-      collinearDeg: lerp(f.collinearDeg, q.collinearDeg, t),
-      sCurveFactor: lerp(f.sCurveFactor, q.sCurveFactor, t),
-      // keep backlash as-is (user/mechanics specific)
-      ...(() => {
-        const cur = plannerReadInputs();
-        return { backlashXmm: cur.backlashXmm || 0.0, backlashYmm: cur.backlashYmm || 0.0 };
-      })()
-    };
-
-    plannerWriteInputs(p);
-
-    if (t <= 0.01) plannerSetProfileLabel("Schnell");
-    else if (t >= 0.99) plannerSetProfileLabel("Qualität");
-    else plannerSetProfileLabel("Balanced");
-  }
-
-  async function plannerLoadFromStatus() {
-    try {
-      const st = await $.get("/status");
-      const pl = st && st.planner ? st.planner : null;
-      if (!pl) return;
-
-      // Firmware uses these keys: junctionDeviationMM etc.
-      const p = {
-        junctionDeviation: pl.junctionDeviationMM,
-        lookaheadSegments: pl.lookaheadSegments,
-        minSegmentTimeMs: pl.minSegmentTimeMs,
-        cornerSlowdown: pl.cornerSlowdown,
-        minCornerFactor: pl.minCornerFactor,
-        minSegmentLenMM: pl.minSegmentLenMM,
-        collinearDeg: pl.collinearDeg,
-        backlashXmm: pl.backlashXmm,
-        backlashYmm: pl.backlashYmm,
-        sCurveFactor: pl.sCurveFactor,
-      };
-
-      plannerWriteInputs(p);
-      plannerSetProfileLabel("Custom");
-    } catch (e) {
-      console.warn("planner load failed", e);
-    }
-  }
-
-  function plannerSaveToFirmware() {
-    const p = plannerReadInputs();
-
-    // basic validation
-    if (!isFinite(p.junctionDeviation) || !isFinite(p.cornerSlowdown) || !isFinite(p.minCornerFactor) ||
-        !isFinite(p.minSegmentLenMM) || !isFinite(p.collinearDeg) || !isFinite(p.sCurveFactor)) {
-      alert("Planner: ungültige Werte");
-      return;
-    }
-
-    $.post("/setPlannerConfig", {
-      junctionDeviation: p.junctionDeviation,
-      lookaheadSegments: p.lookaheadSegments,
-      minSegmentTimeMs: p.minSegmentTimeMs,
-      cornerSlowdown: p.cornerSlowdown,
-      minCornerFactor: p.minCornerFactor,
-      minSegmentLenMM: p.minSegmentLenMM,
-      collinearDeg: p.collinearDeg,
-      backlashXmm: p.backlashXmm,
-      backlashYmm: p.backlashYmm,
-      sCurveFactor: p.sCurveFactor,
-    })
-    .done(() => alert("Planner gespeichert"))
-    .fail(() => alert("Planner speichern fehlgeschlagen"));
-  }
-
-  // bind planner UI
-  if (document.getElementById("plannerMaster")) {
-    document.getElementById("plannerMaster").addEventListener("input", (ev) => {
-      const v = parseInt(ev.target.value, 10);
-      plannerApplyMaster(v / 100.0);
-    });
-
-    // any manual change => Custom label
-    const ids = [
-      "plJunctionDeviation","plLookahead","plMinSegMs","plCornerSlowdown","plMinCorner",
-      "plMinSegLen","plCollinear","plBacklashX","plBacklashY","plSCurve"
-    ];
-    ids.forEach(id => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.addEventListener("change", () => plannerSetProfileLabel("Custom"));
-    });
-
-    document.getElementById("btnLoadPlanner")?.addEventListener("click", plannerLoadFromStatus);
-    document.getElementById("btnSavePlanner")?.addEventListener("click", plannerSaveToFirmware);
-
-    // initial fill
-    plannerLoadFromStatus();
-  }
-
-
   $("#leftMotorToggle").change(function() {
     if (this.checked) {
       client.leftRetractDown();
@@ -4237,3 +4066,134 @@ function initPulseWidthSettingsUI() {
     window.location.href = '/graf/index.html';
   });
 })();
+
+
+  // ===== Planner UI (Gear menu) =====
+  function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+  function lerp(a,b,t){ return a + (b-a)*t; }
+  function lerpInt(a,b,t){ return Math.round(lerp(a,b,t)); }
+
+  function plannerProfileFromMaster(master){
+    const t = clamp(master/100.0, 0.0, 1.0);
+
+    // 0 = fast, 1 = quality
+    const fast = {
+      junctionDeviation: 0.15,
+      lookaheadSegments: 16,
+      minSegmentTimeMs: 0,
+      cornerSlowdown: 0.20,
+      minCornerFactor: 0.55,
+      minSegmentLenMM: 0.50,
+      collinearDeg: 6.0,
+      backlashXmm: 0.0,
+      backlashYmm: 0.0,
+      sCurveFactor: 0.10
+    };
+
+    const qual = {
+      junctionDeviation: 0.01,
+      lookaheadSegments: 96,
+      minSegmentTimeMs: 6,
+      cornerSlowdown: 0.65,
+      minCornerFactor: 0.20,
+      minSegmentLenMM: 0.10,
+      collinearDeg: 1.5,
+      backlashXmm: 0.0,
+      backlashYmm: 0.0,
+      sCurveFactor: 0.75
+    };
+
+    return {
+      junctionDeviation: parseFloat(lerp(fast.junctionDeviation, qual.junctionDeviation, t).toFixed(3)),
+      lookaheadSegments: lerpInt(fast.lookaheadSegments, qual.lookaheadSegments, t),
+      minSegmentTimeMs: lerpInt(fast.minSegmentTimeMs, qual.minSegmentTimeMs, t),
+      cornerSlowdown: parseFloat(lerp(fast.cornerSlowdown, qual.cornerSlowdown, t).toFixed(2)),
+      minCornerFactor: parseFloat(lerp(fast.minCornerFactor, qual.minCornerFactor, t).toFixed(2)),
+      minSegmentLenMM: parseFloat(lerp(fast.minSegmentLenMM, qual.minSegmentLenMM, t).toFixed(2)),
+      collinearDeg: parseFloat(lerp(fast.collinearDeg, qual.collinearDeg, t).toFixed(1)),
+      backlashXmm: 0.0,
+      backlashYmm: 0.0,
+      sCurveFactor: parseFloat(lerp(fast.sCurveFactor, qual.sCurveFactor, t).toFixed(2)),
+    };
+  }
+
+  function plannerSetInputs(p){
+    $("#pl_jd").val(p.junctionDeviation);
+    $("#pl_look").val(p.lookaheadSegments);
+    $("#pl_minms").val(p.minSegmentTimeMs);
+    $("#pl_cslow").val(p.cornerSlowdown);
+    $("#pl_mincf").val(p.minCornerFactor);
+    $("#pl_minlen").val(p.minSegmentLenMM);
+    $("#pl_coldeg").val(p.collinearDeg);
+    $("#pl_blx").val(p.backlashXmm);
+    $("#pl_bly").val(p.backlashYmm);
+    $("#pl_scurve").val(p.sCurveFactor);
+  }
+
+  async function plannerLoadFromDevice(){
+    $("#plannerStatusText").text("Lade...");
+    try{
+      const r = await fetch("/status");
+      const j = await r.json();
+      const p = (j && j.planner) ? j.planner : null;
+      if (!p) { $("#plannerStatusText").text("Keine Planner-Daten"); return; }
+      plannerSetInputs({
+        junctionDeviation: p.junctionDeviation,
+        lookaheadSegments: p.lookaheadSegments,
+        minSegmentTimeMs: p.minSegmentTimeMs,
+        cornerSlowdown: p.cornerSlowdown,
+        minCornerFactor: p.minCornerFactor,
+        minSegmentLenMM: p.minSegmentLenMM,
+        collinearDeg: p.collinearDeg,
+        backlashXmm: p.backlashXmm,
+        backlashYmm: p.backlashYmm,
+        sCurveFactor: p.sCurveFactor
+      });
+      $("#plannerStatusText").text("OK");
+    }catch(e){
+      $("#plannerStatusText").text("Fehler");
+    }
+  }
+
+  async function plannerSaveToDevice(){
+    const p = {
+      junctionDeviation: parseFloat($("#pl_jd").val()),
+      lookaheadSegments: parseInt($("#pl_look").val(), 10),
+      minSegmentTimeMs: parseInt($("#pl_minms").val(), 10),
+      cornerSlowdown: parseFloat($("#pl_cslow").val()),
+      minCornerFactor: parseFloat($("#pl_mincf").val()),
+      minSegmentLenMM: parseFloat($("#pl_minlen").val()),
+      collinearDeg: parseFloat($("#pl_coldeg").val()),
+      backlashXmm: parseFloat($("#pl_blx").val()),
+      backlashYmm: parseFloat($("#pl_bly").val()),
+      sCurveFactor: parseFloat($("#pl_scurve").val())
+    };
+
+    $("#plannerStatusText").text("Speichere...");
+    try{
+      await $.post("/setPlannerConfig", p);
+      $("#plannerStatusText").text("Gespeichert");
+    }catch(e){
+      $("#plannerStatusText").text("Fehler beim Speichern");
+    }
+  }
+
+  // larger slider usable range: show value live
+  $("#plannerMaster").on("input change", function(){
+    const v = parseInt($(this).val(), 10) || 0;
+    $("#plannerMasterValue").text(v);
+    const prof = plannerProfileFromMaster(v);
+    plannerSetInputs(prof);
+  });
+
+  $("#plannerLoadBtn").click(function(){ plannerLoadFromDevice(); });
+  $("#plannerSaveBtn").click(function(){ plannerSaveToDevice(); });
+
+  // load planner when tools modal opens
+  toolsModal.addEventListener('shown.bs.modal', function () {
+    if ($("#toolsSecPlanner").length) {
+      plannerLoadFromDevice();
+      const v = parseInt($("#plannerMaster").val(),10) || 50;
+      $("#plannerMasterValue").text(v);
+    }
+  });

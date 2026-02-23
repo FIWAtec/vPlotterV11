@@ -332,28 +332,33 @@ static void registerPulseWidthEndpoints(AsyncWebServer* server)
     req->send(200, "application/json; charset=utf-8", out);
   });
 
-server->on("/setPulseWidths", HTTP_POST, [](AsyncWebServerRequest* req) {
-  // Pulse width is hard-locked for stability (do not allow runtime changes via UI)
-  const int l = 10;
-  const int r = 10;
+  server->on("/setPulseWidths", HTTP_POST, [](AsyncWebServerRequest* req) {
+    if (!req->hasParam("leftUs", true) || !req->hasParam("rightUs", true)) {
+      req->send(400, "application/json", "{\"ok\":false,\"error\":\"Missing leftUs/rightUs\"}");
+      return;
+    }
 
-  prefs.putInt(PREF_KEY_PULSE_L, l);
-  prefs.putInt(PREF_KEY_PULSE_R, r);
+    int l = req->getParam("leftUs", true)->value().toInt();
+    int r = req->getParam("rightUs", true)->value().toInt();
 
-  if (movement) {
-    movement->setPulseWidths(l, r);
-  }
+    if (l < 1) l = 1;
+    if (r < 1) r = 1;
+    if (l > 2000) l = 2000;
+    if (r > 2000) r = 2000;
 
-  WebLog::info(String("Pulse widths locked: left=") + l + "us right=" + r + "us");
+    prefs.putInt(PREF_KEY_PULSE_L, l);
+    prefs.putInt(PREF_KEY_PULSE_R, r);
 
-  StaticJsonDocument<128> doc;
-  doc["ok"] = true;
-  doc["leftUs"] = l;
-  doc["rightUs"] = r;
-  String out;
-  serializeJson(doc, out);
-  req->send(200, "application/json; charset=utf-8", out);
-});
+    WebLog::info(String("Pulse widths saved: left=") + l + "us right=" + r + "us");
+
+    StaticJsonDocument<128> doc;
+    doc["ok"] = true;
+    doc["leftUs"] = l;
+    doc["rightUs"] = r;
+    String out;
+    serializeJson(doc, out);
+    req->send(200, "application/json; charset=utf-8", out);
+  });
 }
 
 static void registerDiagnosticsEndpoints(AsyncWebServer* server)
@@ -968,8 +973,8 @@ void setup()
   loadEnablePinsFromPrefs(leftEnPin, rightEnPin);
   if (movement) movement->setEnablePins(leftEnPin, rightEnPin);
 
-  int storedPulseL = prefs.getInt(PREF_KEY_PULSE_L, 5);
-  int storedPulseR = prefs.getInt(PREF_KEY_PULSE_R, 5);
+  int storedPulseL = prefs.getInt(PREF_KEY_PULSE_L, 2);
+  int storedPulseR = prefs.getInt(PREF_KEY_PULSE_R, 2);
   int storedPenDown = prefs.getInt(PREF_KEY_PEN_DOWN, 80);
   int storedPenUp   = prefs.getInt(PREF_KEY_PEN_UP, PEN_START_POS);
   if (movement) movement->setPulseWidths(storedPulseL, storedPulseR);

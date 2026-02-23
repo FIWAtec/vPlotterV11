@@ -1,9 +1,9 @@
 #ifndef MOVEMENT_H
 #define MOVEMENT_H
 
-#include <AccelStepper.h>
 #include <Arduino.h>
-#include <math.h>
+#include "stepper_backend.h"
+#include <cmath>
 #include "display.h"
 
 extern int printSpeedSteps;
@@ -137,7 +137,7 @@ class Movement {
 
    private:
 
-    static constexpr int FIXED_PULSE_US = 10;
+    static constexpr int FIXED_PULSE_US = 5;
 
     int _leftEnablePin  = -1;
     int _rightEnablePin = -1;
@@ -172,8 +172,8 @@ class Movement {
     int lastDirX = 0;
     int lastDirY = 0;
 
-    AccelStepper* leftMotor;
-    AccelStepper* rightMotor;
+    StepperBackend* leftMotor;
+    StepperBackend* rightMotor;
     Display* display;
 
     void setOrigin();

@@ -1,0 +1,238 @@
+INSTALL ZIP: C:\p\c++\patch\v14_faststepper_migration_patch.zip
+TIME: 2026-02-23 02:07:30
+TARGET_ROOT: C:\p\c++\vPlotterV1
+DEST (DEST_SUBDIR): C:\p\c++\vPlotterV1
+VERSION:  PATCH_ID: 
+INSTALL_TXT: (none)
+BACKUP_ENABLED: True
+BACKUP_ZIP: C:\p\c++\backup\backup_vPlotterV1_vnone_none_20260223_020721.zip
+PRECHECK: replace=2 add=3 total=5
+
+--- DIFF (line numbers) src/movement.h ---
+HUNK old 1-9  new 1-9
+- old:     4 #include <AccelStepper.h>
+- old:     6 #include <math.h>
++ new:     5 #include "stepper_backend.h"
++ new:     6 #include <cmath>
+HUNK old 25-42  new 25-42
+- old:    28 constexpr float homedStepOffsetMM = 40.0;
++ new:    28 constexpr float homedStepOffsetMM = 20.0;
+- old:    32 constexpr double mass_bot = 1.0;
++ new:    32 constexpr double mass_bot = 1.5;
+- old:    39 constexpr double belt_elongation_coefficient = 5e-5;
++ new:    39 constexpr double belt_elongation_coefficient = 0.0; 
+HUNK old 52-77  new 52-73
+- old:    55         // Cornering and lookahead related knobs
+- old:    56         double junctionDeviationMM;   // 0.01 .. 1.0 typical
+- old:    57         int lookaheadSegments;        // 1 .. 128
+- old:    58         int minSegmentTimeMs;         // 0 .. 50
+- old:    59         double cornerSlowdown;        // 0..1 , lower => stronger corner slow-down
+- old:    60         double minCornerFactor;       // minimal speed factor in very sharp corners
++ new:    55         double junctionDeviationMM;   
++ new:    56         int lookaheadSegments;       
++ new:    57         int minSegmentTimeMs;       
++ new:    58         double cornerSlowdown;       
++ new:    59         double minCornerFactor;      
+- old:    62         // Geometry based dynamic feed and filters
+- old:    63         double minSegmentLenMM;       // tiny segments can be skipped/merged by runner
+- old:    64         double collinearDeg;          // merge threshold in degrees
++ new:    61         double minSegmentLenMM;     
++ new:    62         double collinearDeg;        
+- old:    66         // Backlash compensation in mm
+- old:    70         // S-curve style soften factor (0..1), practical approximation on top of AccelStepper
+- old:    74             junctionDeviationMM(0.08),
++ new:    70             junctionDeviationMM(0.02),
+HUNK old 176-186  new 172-179
+- old:   179     // Low-pass filtered corner factor (emulates lookahead smoothing)
+- old:   180     mutable double cornerFactorLP = 1.0;
+- old:   181 
+- old:   182     AccelStepper* leftMotor;
+- old:   183     AccelStepper* rightMotor;
++ new:   175     StepperBackend* leftMotor;
++ new:   176     StepperBackend* rightMotor;
+
+--- DIFF (line numbers) src/movement.cpp ---
+HUNK old 12-26  new 12-34
+- old:    15     leftMotor = new AccelStepper(AccelStepper::DRIVER, LEFT_STEP_PIN, LEFT_DIR_PIN);
++ new:    15     #if USE_FAST_ACCELSTEPPER
++ new:    16     leftMotor = new FastStepperBackend(LEFT_STEP_PIN, LEFT_DIR_PIN);
++ new:    17 #else
++ new:    18     leftMotor = new AccelStepperBackend(LEFT_STEP_PIN, LEFT_DIR_PIN);
++ new:    19 #endif
+- old:    22     rightMotor = new AccelStepper(AccelStepper::DRIVER, RIGHT_STEP_PIN, RIGHT_DIR_PIN);
+- old:    23     rightMotor->setPinsInverted(true, false, false);
++ new:    26 #if USE_FAST_ACCELSTEPPER
++ new:    27     rightMotor = new FastStepperBackend(RIGHT_STEP_PIN, RIGHT_DIR_PIN);
++ new:    28 #else
++ new:    29     rightMotor = new AccelStepperBackend(RIGHT_STEP_PIN, RIGHT_DIR_PIN);
++ new:    30 #endif
++ new:    31     rightMotor->setPinsInverted(true);
+HUNK old 137-149  new 145-159
+- old:   140     leftMotor->runSpeedToPosition();
+- old:   141     rightMotor->runSpeedToPosition();
++ new:   148     // run() uses acceleration profile (setAcceleration), runSpeedToPosition() does not
++ new:   149     leftMotor->run();
++ new:   150     rightMotor->run();
++ new:   156 
+HUNK old 184-195  new 194-207
+- old:   187     constexpr double gamma_step = 0.20 * PI / 180.0;
++ new:   197     // Smaller step improves straightness when many tiny XY segments are executed
++ new:   198     constexpr double gamma_step = 0.05 * PI / 180.0;
+- old:   192     for (double gamma = gamma_init - gamma_search_window; gamma > gamma_min && gamma < gamma_max && gamma <= gamma_init + gamma_search_window; gamma += gamma_step) {
++ new:   203     // Scan full window and pick best. Do NOT early-return on first "worse" sample.
++ new:   204     for (double gamma = gamma_init - gamma_search_window; gamma >= gamma_min && gamma <= gamma_max && gamma <= gamma_init + gamma_search_window; gamma += gamma_step) {
+HUNK old 203-213  new 215-223
+- old:   206         if (abs(T_delta) < abs(T_delta_best)) {
++ new:   218         if (fabs(T_delta) < fabs(T_delta_best)) {
+- old:   209         } else {
+- old:   210             return gamma_best;
+HUNK old 262-296  new 272-287
+- old:   265     // If we are segmenting XY very small, do not punish corners again
+- old:   266     if (len < plannerCfg.minSegmentLenMM) return 1.0;
+- old:   267 
+- old:   273     // Junction deviation influences how aggressively we slow down in corners.
+- old:   274     // Bigger junctionDeviationMM -> faster corners, smaller -> safer/cleaner.
+- old:   275     const double jd = std::max(0.001, plannerCfg.junctionDeviationMM);
+- old:   276     const double jdRef = 0.02; // default reference
+- old:   277     const double jdScale = jdRef / jd;
+- old:   278 
+- old:   279     double f = 1.0 - sharpness * plannerCfg.cornerSlowdown * jdScale;
+- old:   280 
++ new:   280     // Junction-deviation style simple scaler
++ new:   281     double f = 1.0 - sharpness * plannerCfg.cornerSlowdown;
+- old:   283 
+- old:   284     // Simple lookahead-like smoothing: low-pass filter over N segments
+- old:   285     const int n = std::max(1, plannerCfg.lookaheadSegments);
+- old:   286     const double alpha = 1.0 / (double)n;
+- old:   287 
+- old:   288     cornerFactorLP = cornerFactorLP + (f - cornerFactorLP) * alpha;
+- old:   289 
+- old:   290     if (cornerFactorLP < plannerCfg.minCornerFactor) cornerFactorLP = plannerCfg.minCornerFactor;
+- old:   291     if (cornerFactorLP > 1.0) cornerFactorLP = 1.0;
+- old:   292 
+- old:   293     return cornerFactorLP;
++ new:   284     return f;
+HUNK old 300-319  new 291-319
+- old:   303     double tx = x;
+- old:   304     double ty = y;
+- old:   305     const double dx = tx - X;
+- old:   306     const double dy = ty - Y;
+- old:   307     int dirX = (dx > 1e-6) ? 1 : ((dx < -1e-6) ? -1 : 0);
+- old:   308     int dirY = (dy > 1e-6) ? 1 : ((dy < -1e-6) ? -1 : 0);
+- old:   309 
+- old:   310     if (lastDirX != 0 && dirX != 0 && dirX != lastDirX) tx += dirX * plannerCfg.backlashXmm;
+- old:   311     if (lastDirY != 0 && dirY != 0 && dirY != lastDirY) ty += dirY * plannerCfg.backlashYmm;
+- old:   312 
+- old:   313     tx = std::max(0.0, std::min(width, tx));
+- old:   314     if (ty < 0.0) ty = 0.0;
+- old:   315 
+- old:   316     const auto lengths = getBeltLengths(tx, ty);
++ new:   294 double tx = x;
++ new:   295 double ty = y;
++ new:   296 
++ new:   297 // Direction based on original target (before backlash), so compensation triggers reliably.
++ new:   298 double dx0 = tx - X;
++ new:   299 double dy0 = ty - Y;
++ new:   300 int dirX0 = (dx0 > 1e-6) ? 1 : ((dx0 < -1e-6) ? -1 : 0);
++ new:   301 int dirY0 = (dy0 > 1e-6) ? 1 : ((dy0 < -1e-6) ? -1 : 0);
++ new:   302 
++ new:   303 if (lastDirX != 0 && dirX0 != 0 && dirX0 != lastDirX) tx += dirX0 * plannerCfg.backlashXmm;
++ new:   304 if (lastDirY != 0 && dirY0 != 0 && dirY0 != lastDirY) ty += dirY0 * plannerCfg.backlashYmm;
++ new:   305 
++ new:   306 // Clamp
++ new:   307 tx = std::max(0.0, std::min(width, tx));
++ new:   308 if (ty < 0.0) ty = 0.0;
++ new:   309 
++ new:   310 // IMPORTANT: recompute segment vector after backlash/clamp. This is the real movement.
++ new:   311 const double dx = tx - X;
++ new:   312 const double dy = ty - Y;
++ new:   313 int dirX = (dx > 1e-6) ? 1 : ((dx < -1e-6) ? -1 : 0);
++ new:   314 int dirY = (dy > 1e-6) ? 1 : ((dy < -1e-6) ? -1 : 0);
++ new:   315 
++ new:   316 const auto lengths = getBeltLengths(tx, ty);
+HUNK old 340-368  new 340-381
+- old:   343     // Approximate S-curve by lowering accel around corners
+- old:   344     double accelScale = 1.0 - ((1.0 - cornerFactor) * plannerCfg.sCurveFactor);
+- old:   345     if (accelScale < 0.2) accelScale = 0.2;
+- old:   346     const float localAccel = (float)std::max(1.0, accelerationSteps * accelScale);
+- old:   347     leftMotor->setAcceleration(localAccel);
+- old:   348     rightMotor->setAcceleration(localAccel);
+- old:   349 
+- old:   350     const float moveTime = (float)maxDelta / (float)targetSpeed;
++ new:   343 double accelScale = 1.0 - ((1.0 - cornerFactor) * plannerCfg.sCurveFactor);
++ new:   344 if (accelScale < 0.2) accelScale = 0.2;
++ new:   345 
++ new:   346 const float localAccelBase = (float)std::max(1.0, accelerationSteps * accelScale);
++ new:   347 
++ new:   348 const float moveTime = (float)maxDelta / (float)targetSpeed;
+- old:   357     rightMotor->enableOutputs();
+- old:   358 
+- old:   359     leftMotor->moveTo(leftLegSteps);
+- old:   360     leftMotor->setSpeed(leftSpeed);
+- old:   361 
+- old:   362     rightMotor->moveTo(rightLegSteps);
+- old:   363     rightMotor->setSpeed(rightSpeed);
+- old:   364 
+- old:   365     X = tx;
++ new:   355 rightMotor->enableOutputs();
++ new:   356 
++ new:   357 leftMotor->setMaxSpeed(leftSpeed);
++ new:   358 rightMotor->setMaxSpeed(rightSpeed);
++ new:   359 
++ new:   360 const float refV = (float)targetSpeed;
++ new:   361 float aL = localAccelBase;
++ new:   362 float aR = localAccelBase;
++ new:   363 
++ new:   364 if (refV > 1.0f) {
++ new:   365     aL = localAccelBase * (leftSpeed / refV);
++ new:   366     aR = localAccelBase * (rightSpeed / refV);
++ new:   367 }
++ new:   368 
++ new:   369 if (aL < 1.0f) aL = 1.0f;
++ new:   370 if (aR < 1.0f) aR = 1.0f;
++ new:   371 
++ new:   372 leftMotor->setAcceleration(aL);
++ new:   373 rightMotor->setAcceleration(aR);
++ new:   374 
++ new:   375 leftMotor->moveTo(leftLegSteps);
++ new:   376 rightMotor->moveTo(rightLegSteps);
++ new:   377 
++ new:   378 X = tx;
+HUNK old 395-404  new 408-415
+- old:   398     const int maxS = (printSpeedSteps > moveSpeedSteps) ? printSpeedSteps : moveSpeedSteps;
+- old:   399 
+- old:   400     if (leftMotor) leftMotor->setMaxSpeed(maxS);
+- old:   401     if (rightMotor) rightMotor->setMaxSpeed(maxS);
++ new:   411     if (leftMotor) leftMotor->setMaxSpeed(moveSpeedSteps);
++ new:   412     if (rightMotor) rightMotor->setMaxSpeed(moveSpeedSteps);
+HUNK old 447-472  new 458-480
+- old:   450   if (leftMotor)  leftMotor->setEnablePin(_leftEnablePin);
+- old:   451   if (rightMotor) rightMotor->setEnablePin(_rightEnablePin);
++ new:   461   // Enable pin is optional. With FastAccelStepper it is recommended for clean driver enable/disable.
++ new:   462   if (leftMotor)  leftMotor->configureEnablePin(_leftEnablePin, true);
++ new:   463   if (rightMotor) rightMotor->configureEnablePin(_rightEnablePin, true);
+- old:   457 void Movement::setPulseWidths(int leftUs, int rightUs) {
+- old:   458   if (leftUs < 1) leftUs = 1;
+- old:   459   if (rightUs < 1) rightUs = 1;
+- old:   460   if (leftUs > 1000) leftUs = 1000;
+- old:   461   if (rightUs > 1000) rightUs = 1000;
+- old:   462 
+- old:   463   _leftPulseWidthUs = leftUs;
+- old:   464   _rightPulseWidthUs = rightUs;
+- old:   465 
+- old:   466   if (leftMotor) leftMotor->setMinPulseWidth(_leftPulseWidthUs);
+- old:   467   if (rightMotor) rightMotor->setMinPulseWidth(_rightPulseWidthUs);
+- old:   468 
+- old:   469   WebLog::info("Pulse widths updated: left=" + String(_leftPulseWidthUs) + "us right=" + String(_rightPulseWidthUs) + "us");
++ new:   469 void Movement::setPulseWidths(int /*leftUs*/, int /*rightUs*/) {
++ new:   470   // Fixed pulse width for stability. Do not make this configurable at runtime.
++ new:   471   const int us = FIXED_PULSE_US;
++ new:   472 
++ new:   473   _leftPulseWidthUs = us;
++ new:   474   _rightPulseWidthUs = us;
++ new:   475 
++ new:   476   if (leftMotor) leftMotor->setMinPulseWidth(us);
++ new:   477   if (rightMotor) rightMotor->setMinPulseWidth(us);
+
+CHANGELOG: C:\p\c++\vPlotterV1\CHANGELOG_unknown_20260223_020730.md
+INSTALL DONE

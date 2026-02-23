@@ -12,15 +12,23 @@ int moveSpeedSteps = 2000;
 Movement::Movement(Display* display) {
     this->display = display;
 
-    leftMotor = new AccelStepper(AccelStepper::DRIVER, LEFT_STEP_PIN, LEFT_DIR_PIN);
+    #if USE_FAST_ACCELSTEPPER
+    leftMotor = new FastStepperBackend(LEFT_STEP_PIN, LEFT_DIR_PIN);
+#else
+    leftMotor = new AccelStepperBackend(LEFT_STEP_PIN, LEFT_DIR_PIN);
+#endif
     leftMotor->setMaxSpeed(moveSpeedSteps);
     leftMotor->setAcceleration((float)accelerationSteps);
     leftMotor->setPinsInverted(false);
     leftMotor->setMinPulseWidth(_leftPulseWidthUs);
     leftMotor->disableOutputs();
 
-    rightMotor = new AccelStepper(AccelStepper::DRIVER, RIGHT_STEP_PIN, RIGHT_DIR_PIN);
-    rightMotor->setPinsInverted(true, false, false);
+#if USE_FAST_ACCELSTEPPER
+    rightMotor = new FastStepperBackend(RIGHT_STEP_PIN, RIGHT_DIR_PIN);
+#else
+    rightMotor = new AccelStepperBackend(RIGHT_STEP_PIN, RIGHT_DIR_PIN);
+#endif
+    rightMotor->setPinsInverted(true);
     rightMotor->setMaxSpeed(moveSpeedSteps);
     rightMotor->setAcceleration((float)accelerationSteps);
     rightMotor->setMinPulseWidth(_rightPulseWidthUs);
@@ -450,8 +458,9 @@ void Movement::setMotionTuning(long infiniteSteps, long acceleration) {
 void Movement::setEnablePins(int leftEnablePin, int rightEnablePin) {
   _leftEnablePin = leftEnablePin;
   _rightEnablePin = rightEnablePin;
-  if (leftMotor)  leftMotor->setEnablePin(_leftEnablePin);
-  if (rightMotor) rightMotor->setEnablePin(_rightEnablePin);
+  // Enable pin is optional. With FastAccelStepper it is recommended for clean driver enable/disable.
+  if (leftMotor)  leftMotor->configureEnablePin(_leftEnablePin, true);
+  if (rightMotor) rightMotor->configureEnablePin(_rightEnablePin, true);
 }
 
 int Movement::getLeftEnablePin() const { return _leftEnablePin; }

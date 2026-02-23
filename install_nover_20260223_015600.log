@@ -1,0 +1,787 @@
+INSTALL ZIP: C:\p\c++\patch\v14_patch_planner_ui_pulse5.zip
+TIME: 2026-02-23 01:56:00
+TARGET_ROOT: C:\p\c++\vPlotterV1
+DEST (DEST_SUBDIR): C:\p\c++\vPlotterV1
+VERSION:  PATCH_ID: 
+INSTALL_TXT: (none)
+BACKUP_ENABLED: True
+BACKUP_ZIP: C:\p\c++\backup\backup_vPlotterV1_vnone_none_20260223_015551.zip
+PRECHECK: replace=7 add=0 total=7
+
+--- DIFF (line numbers) src/movement.h ---
+HUNK old 25-42  new 25-42
+- old:    28 constexpr float homedStepOffsetMM = 20.0;
++ new:    28 constexpr float homedStepOffsetMM = 40.0;
+- old:    32 constexpr double mass_bot = 1.5;
++ new:    32 constexpr double mass_bot = 1.0;
+- old:    39 constexpr double belt_elongation_coefficient = 0.0; 
++ new:    39 constexpr double belt_elongation_coefficient = 5e-5;
+HUNK old 52-73  new 52-77
+- old:    55         double junctionDeviationMM;   
+- old:    56         int lookaheadSegments;       
+- old:    57         int minSegmentTimeMs;       
+- old:    58         double cornerSlowdown;       
+- old:    59         double minCornerFactor;      
+- old:    60 
+- old:    61         double minSegmentLenMM;     
+- old:    62         double collinearDeg;        
+- old:    63 
++ new:    55         // Cornering and lookahead related knobs
++ new:    56         double junctionDeviationMM;   // 0.01 .. 1.0 typical
++ new:    57         int lookaheadSegments;        // 1 .. 128
++ new:    58         int minSegmentTimeMs;         // 0 .. 50
++ new:    59         double cornerSlowdown;        // 0..1 , lower => stronger corner slow-down
++ new:    60         double minCornerFactor;       // minimal speed factor in very sharp corners
++ new:    61 
++ new:    62         // Geometry based dynamic feed and filters
++ new:    63         double minSegmentLenMM;       // tiny segments can be skipped/merged by runner
++ new:    64         double collinearDeg;          // merge threshold in degrees
++ new:    65 
++ new:    66         // Backlash compensation in mm
++ new:    70         // S-curve style soften factor (0..1), practical approximation on top of AccelStepper
+- old:    70             junctionDeviationMM(0.02),
++ new:    74             junctionDeviationMM(0.08),
+HUNK old 137-143  new 141-147
+- old:   140     static constexpr int FIXED_PULSE_US = 10;
++ new:   144     static constexpr int FIXED_PULSE_US = 5;
+HUNK old 171-176  new 175-183
++ new:   178 
++ new:   179     // Low-pass filtered corner factor (emulates lookahead smoothing)
++ new:   180     mutable double cornerFactorLP = 1.0;
+
+--- DIFF (line numbers) src/movement.cpp ---
+HUNK old 137-151  new 137-149
+- old:   140     // run() uses acceleration profile (setAcceleration), runSpeedToPosition() does not
+- old:   141     leftMotor->run();
+- old:   142     rightMotor->run();
++ new:   140     leftMotor->runSpeedToPosition();
++ new:   141     rightMotor->runSpeedToPosition();
+- old:   148 
+HUNK old 186-199  new 184-195
+- old:   189     // Smaller step improves straightness when many tiny XY segments are executed
+- old:   190     constexpr double gamma_step = 0.05 * PI / 180.0;
++ new:   187     constexpr double gamma_step = 0.20 * PI / 180.0;
+- old:   195     // Scan full window and pick best. Do NOT early-return on first "worse" sample.
+- old:   196     for (double gamma = gamma_init - gamma_search_window; gamma >= gamma_min && gamma <= gamma_max && gamma <= gamma_init + gamma_search_window; gamma += gamma_step) {
++ new:   192     for (double gamma = gamma_init - gamma_search_window; gamma > gamma_min && gamma < gamma_max && gamma <= gamma_init + gamma_search_window; gamma += gamma_step) {
+HUNK old 207-215  new 203-213
+- old:   210         if (fabs(T_delta) < fabs(T_delta_best)) {
++ new:   206         if (abs(T_delta) < abs(T_delta_best)) {
++ new:   209         } else {
++ new:   210             return gamma_best;
+HUNK old 264-279  new 262-296
++ new:   265     // If we are segmenting XY very small, do not punish corners again
++ new:   266     if (len < plannerCfg.minSegmentLenMM) return 1.0;
++ new:   267 
+- old:   272     // Junction-deviation style simple scaler
+- old:   273     double f = 1.0 - sharpness * plannerCfg.cornerSlowdown;
++ new:   273     // Junction deviation influences how aggressively we slow down in corners.
++ new:   274     // Bigger junctionDeviationMM -> faster corners, smaller -> safer/cleaner.
++ new:   275     const double jd = std::max(0.001, plannerCfg.junctionDeviationMM);
++ new:   276     const double jdRef = 0.02; // default reference
++ new:   277     const double jdScale = jdRef / jd;
++ new:   278 
++ new:   279     double f = 1.0 - sharpness * plannerCfg.cornerSlowdown * jdScale;
++ new:   280 
+- old:   276     return f;
++ new:   283 
++ new:   284     // Simple lookahead-like smoothing: low-pass filter over N segments
++ new:   285     const int n = std::max(1, plannerCfg.lookaheadSegments);
++ new:   286     const double alpha = 1.0 / (double)n;
++ new:   287 
++ new:   288     cornerFactorLP = cornerFactorLP + (f - cornerFactorLP) * alpha;
++ new:   289 
++ new:   290     if (cornerFactorLP < plannerCfg.minCornerFactor) cornerFactorLP = plannerCfg.minCornerFactor;
++ new:   291     if (cornerFactorLP > 1.0) cornerFactorLP = 1.0;
++ new:   292 
++ new:   293     return cornerFactorLP;
+HUNK old 283-311  new 300-319
+- old:   286 double tx = x;
+- old:   287 double ty = y;
+- old:   288 
+- old:   289 // Direction based on original target (before backlash), so compensation triggers reliably.
+- old:   290 double dx0 = tx - X;
+- old:   291 double dy0 = ty - Y;
+- old:   292 int dirX0 = (dx0 > 1e-6) ? 1 : ((dx0 < -1e-6) ? -1 : 0);
+- old:   293 int dirY0 = (dy0 > 1e-6) ? 1 : ((dy0 < -1e-6) ? -1 : 0);
+- old:   294 
+- old:   295 if (lastDirX != 0 && dirX0 != 0 && dirX0 != lastDirX) tx += dirX0 * plannerCfg.backlashXmm;
+- old:   296 if (lastDirY != 0 && dirY0 != 0 && dirY0 != lastDirY) ty += dirY0 * plannerCfg.backlashYmm;
+- old:   297 
+- old:   298 // Clamp
+- old:   299 tx = std::max(0.0, std::min(width, tx));
+- old:   300 if (ty < 0.0) ty = 0.0;
+- old:   301 
+- old:   302 // IMPORTANT: recompute segment vector after backlash/clamp. This is the real movement.
+- old:   303 const double dx = tx - X;
+- old:   304 const double dy = ty - Y;
+- old:   305 int dirX = (dx > 1e-6) ? 1 : ((dx < -1e-6) ? -1 : 0);
+- old:   306 int dirY = (dy > 1e-6) ? 1 : ((dy < -1e-6) ? -1 : 0);
+- old:   307 
+- old:   308 const auto lengths = getBeltLengths(tx, ty);
++ new:   303     double tx = x;
++ new:   304     double ty = y;
++ new:   305     const double dx = tx - X;
++ new:   306     const double dy = ty - Y;
++ new:   307     int dirX = (dx > 1e-6) ? 1 : ((dx < -1e-6) ? -1 : 0);
++ new:   308     int dirY = (dy > 1e-6) ? 1 : ((dy < -1e-6) ? -1 : 0);
++ new:   309 
++ new:   310     if (lastDirX != 0 && dirX != 0 && dirX != lastDirX) tx += dirX * plannerCfg.backlashXmm;
++ new:   311     if (lastDirY != 0 && dirY != 0 && dirY != lastDirY) ty += dirY * plannerCfg.backlashYmm;
++ new:   312 
++ new:   313     tx = std::max(0.0, std::min(width, tx));
++ new:   314     if (ty < 0.0) ty = 0.0;
++ new:   315 
++ new:   316     const auto lengths = getBeltLengths(tx, ty);
+HUNK old 332-373  new 340-368
+- old:   335 double accelScale = 1.0 - ((1.0 - cornerFactor) * plannerCfg.sCurveFactor);
+- old:   336 if (accelScale < 0.2) accelScale = 0.2;
+- old:   337 
+- old:   338 const float localAccelBase = (float)std::max(1.0, accelerationSteps * accelScale);
+- old:   339 
+- old:   340 const float moveTime = (float)maxDelta / (float)targetSpeed;
++ new:   343     // Approximate S-curve by lowering accel around corners
++ new:   344     double accelScale = 1.0 - ((1.0 - cornerFactor) * plannerCfg.sCurveFactor);
++ new:   345     if (accelScale < 0.2) accelScale = 0.2;
++ new:   346     const float localAccel = (float)std::max(1.0, accelerationSteps * accelScale);
++ new:   347     leftMotor->setAcceleration(localAccel);
++ new:   348     rightMotor->setAcceleration(localAccel);
++ new:   349 
++ new:   350     const float moveTime = (float)maxDelta / (float)targetSpeed;
+- old:   347 rightMotor->enableOutputs();
+- old:   348 
+- old:   349 leftMotor->setMaxSpeed(leftSpeed);
+- old:   350 rightMotor->setMaxSpeed(rightSpeed);
+- old:   351 
+- old:   352 const float refV = (float)targetSpeed;
+- old:   353 float aL = localAccelBase;
+- old:   354 float aR = localAccelBase;
+- old:   355 
+- old:   356 if (refV > 1.0f) {
+- old:   357     aL = localAccelBase * (leftSpeed / refV);
+- old:   358     aR = localAccelBase * (rightSpeed / refV);
+- old:   359 }
+- old:   360 
+- old:   361 if (aL < 1.0f) aL = 1.0f;
+- old:   362 if (aR < 1.0f) aR = 1.0f;
+- old:   363 
+- old:   364 leftMotor->setAcceleration(aL);
+- old:   365 rightMotor->setAcceleration(aR);
+- old:   366 
+- old:   367 leftMotor->moveTo(leftLegSteps);
+- old:   368 rightMotor->moveTo(rightLegSteps);
+- old:   369 
+- old:   370 X = tx;
++ new:   357     rightMotor->enableOutputs();
++ new:   358 
++ new:   359     leftMotor->moveTo(leftLegSteps);
++ new:   360     leftMotor->setSpeed(leftSpeed);
++ new:   361 
++ new:   362     rightMotor->moveTo(rightLegSteps);
++ new:   363     rightMotor->setSpeed(rightSpeed);
++ new:   364 
++ new:   365     X = tx;
+HUNK old 400-407  new 395-404
+- old:   403     if (leftMotor) leftMotor->setMaxSpeed(moveSpeedSteps);
+- old:   404     if (rightMotor) rightMotor->setMaxSpeed(moveSpeedSteps);
++ new:   398     const int maxS = (printSpeedSteps > moveSpeedSteps) ? printSpeedSteps : moveSpeedSteps;
++ new:   399 
++ new:   400     if (leftMotor) leftMotor->setMaxSpeed(maxS);
++ new:   401     if (rightMotor) rightMotor->setMaxSpeed(maxS);
+HUNK old 457-471  new 454-472
+- old:   460 void Movement::setPulseWidths(int /*leftUs*/, int /*rightUs*/) {
+- old:   461   // Fixed pulse width for stability. Do not make this configurable at runtime.
+- old:   462   const int us = FIXED_PULSE_US;
+- old:   463 
+- old:   464   _leftPulseWidthUs = us;
+- old:   465   _rightPulseWidthUs = us;
+- old:   466 
+- old:   467   if (leftMotor) leftMotor->setMinPulseWidth(us);
+- old:   468   if (rightMotor) rightMotor->setMinPulseWidth(us);
++ new:   457 void Movement::setPulseWidths(int leftUs, int rightUs) {
++ new:   458   if (leftUs < 1) leftUs = 1;
++ new:   459   if (rightUs < 1) rightUs = 1;
++ new:   460   if (leftUs > 1000) leftUs = 1000;
++ new:   461   if (rightUs > 1000) rightUs = 1000;
++ new:   462 
++ new:   463   _leftPulseWidthUs = leftUs;
++ new:   464   _rightPulseWidthUs = rightUs;
++ new:   465 
++ new:   466   if (leftMotor) leftMotor->setMinPulseWidth(_leftPulseWidthUs);
++ new:   467   if (rightMotor) rightMotor->setMinPulseWidth(_rightPulseWidthUs);
++ new:   468 
++ new:   469   WebLog::info("Pulse widths updated: left=" + String(_leftPulseWidthUs) + "us right=" + String(_rightPulseWidthUs) + "us");
+
+--- DIFF (line numbers) src/main.cpp ---
+HUNK old 332-359  new 332-364
+- old:   335 server->on("/setPulseWidths", HTTP_POST, [](AsyncWebServerRequest* req) {
+- old:   336   // Pulse width is hard-locked for stability (do not allow runtime changes via UI)
+- old:   337   const int l = 10;
+- old:   338   const int r = 10;
+- old:   339 
+- old:   340   prefs.putInt(PREF_KEY_PULSE_L, l);
+- old:   341   prefs.putInt(PREF_KEY_PULSE_R, r);
+- old:   342 
+- old:   343   if (movement) {
+- old:   344     movement->setPulseWidths(l, r);
+- old:   345   }
+- old:   346 
+- old:   347   WebLog::info(String("Pulse widths locked: left=") + l + "us right=" + r + "us");
+- old:   348 
+- old:   349   StaticJsonDocument<128> doc;
+- old:   350   doc["ok"] = true;
+- old:   351   doc["leftUs"] = l;
+- old:   352   doc["rightUs"] = r;
+- old:   353   String out;
+- old:   354   serializeJson(doc, out);
+- old:   355   req->send(200, "application/json; charset=utf-8", out);
+- old:   356 });
++ new:   335   server->on("/setPulseWidths", HTTP_POST, [](AsyncWebServerRequest* req) {
++ new:   336     if (!req->hasParam("leftUs", true) || !req->hasParam("rightUs", true)) {
++ new:   337       req->send(400, "application/json", "{\"ok\":false,\"error\":\"Missing leftUs/rightUs\"}");
++ new:   338       return;
++ new:   339     }
++ new:   340 
++ new:   341     int l = req->getParam("leftUs", true)->value().toInt();
++ new:   342     int r = req->getParam("rightUs", true)->value().toInt();
++ new:   343 
++ new:   344     if (l < 1) l = 1;
++ new:   345     if (r < 1) r = 1;
++ new:   346     if (l > 2000) l = 2000;
++ new:   347     if (r > 2000) r = 2000;
++ new:   348 
++ new:   349     prefs.putInt(PREF_KEY_PULSE_L, l);
++ new:   350     prefs.putInt(PREF_KEY_PULSE_R, r);
++ new:   351 
++ new:   352     WebLog::info(String("Pulse widths saved: left=") + l + "us right=" + r + "us");
++ new:   353 
++ new:   354     StaticJsonDocument<128> doc;
++ new:   355     doc["ok"] = true;
++ new:   356     doc["leftUs"] = l;
++ new:   357     doc["rightUs"] = r;
++ new:   358     String out;
++ new:   359     serializeJson(doc, out);
++ new:   360     req->send(200, "application/json; charset=utf-8", out);
++ new:   361   });
+HUNK old 968-975  new 973-980
+- old:   971   int storedPulseL = prefs.getInt(PREF_KEY_PULSE_L, 5);
+- old:   972   int storedPulseR = prefs.getInt(PREF_KEY_PULSE_R, 5);
++ new:   976   int storedPulseL = prefs.getInt(PREF_KEY_PULSE_L, 2);
++ new:   977   int storedPulseR = prefs.getInt(PREF_KEY_PULSE_R, 2);
+
+--- DIFF (line numbers) data/www/index.html ---
+HUNK old 314-321  new 314-321
+- old:   317           <div class="small text-uppercase text-muted fw-semibold mb-2">
+- old:   318             </div>
++ new:   317           <div class="small text-uppercase text-muted fw-semibold mb-2">Stift Feinabgleich (wird erst beim nächsten
++ new:   318             Pen-Up/Pen-Down übernommen)</div>
+HUNK old 328-333  new 328-334
++ new:   331             Änderungen sind vorgemerkt und werden automatisch beim nächsten Übergang angewendet.
+HUNK old 335-341  new 336-342
+- old:   338       <h6 class="m-0">MANIAC Version v12.0.04</h6>
++ new:   339       <h6 class="m-0">MANIAC Version v10.0.04</h6>
+HUNK old 443-448  new 444-539
++ new:   447             <!-- SECTION: PLANNER -->
++ new:   448             <section class="tools-section mt-3" id="toolsSecPlanner">
++ new:   449               <div class="section-title d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
++ new:   450                 <div>
++ new:   451                   <div class="small text-uppercase text-muted fw-semibold">Tuning</div>
++ new:   452                   <h6 class="mb-0 fw-semibold">Planner (Speed ↔ Qualität)</h6>
++ new:   453                 </div>
++ new:   454                 <span class="badge bg-secondary">Live</span>
++ new:   455               </div>
++ new:   456 
++ new:   457               <div class="card glass-card p-3">
++ new:   458                 <div class="mb-3">
++ new:   459                   <label class="form-label d-flex justify-content-between align-items-center mb-1">
++ new:   460                     <span>Gesamtprofil</span>
++ new:   461                     <span class="badge bg-light text-dark" id="plannerMasterValue">50</span>
++ new:   462                   </label>
++ new:   463                   <input type="range" class="form-range" min="0" max="100" step="1" id="plannerMaster" value="50">
++ new:   464                   <div class="d-flex justify-content-between small text-muted">
++ new:   465                     <span>Schnell</span><span>Balanced</span><span>Qualität</span>
++ new:   466                   </div>
++ new:   467                   <div class="small text-muted mt-2">
++ new:   468                     Schiebt alle Werte gleichzeitig. Danach kannst du jeden Wert einzeln feinjustieren (Custom).
++ new:   469                   </div>
++ new:   470                 </div>
++ new:   471 
++ new:   472                 <div class="row g-3">
++ new:   473                   <div class="col-12 col-md-6">
++ new:   474                     <label class="form-label mb-1">Junction Deviation (mm)</label>
++ new:   475                     <input id="pl_jd" type="number" class="form-control" min="0.001" max="2.0" step="0.001">
++ new:   476                     <div class="small text-muted mt-1">Klein = sauberere Ecken (langsamer), groß = schneller durch Kurven.</div>
++ new:   477                   </div>
++ new:   478                   <div class="col-12 col-md-6">
++ new:   479                     <label class="form-label mb-1">Lookahead Segmente</label>
++ new:   480                     <input id="pl_look" type="number" class="form-control" min="1" max="128" step="1">
++ new:   481                     <div class="small text-muted mt-1">Mehr = ruhiger/gleichmäßiger (mehr „Vorausschau“), weniger = direkter.</div>
++ new:   482                   </div>
++ new:   483 
++ new:   484                   <div class="col-12 col-md-6">
++ new:   485                     <label class="form-label mb-1">Min Segment Time (ms)</label>
++ new:   486                     <input id="pl_minms" type="number" class="form-control" min="0" max="100" step="1">
++ new:   487                     <div class="small text-muted mt-1">Erzwingt Mindestzeit pro Segment (stabiler bei Mini-Segmenten).</div>
++ new:   488                   </div>
++ new:   489                   <div class="col-12 col-md-6">
++ new:   490                     <label class="form-label mb-1">S-Curve Factor</label>
++ new:   491                     <input id="pl_scurve" type="number" class="form-control" min="0.0" max="1.0" step="0.01">
++ new:   492                     <div class="small text-muted mt-1">Mehr = weicheres Anfahren/Stoppen (weniger Rattern).</div>
++ new:   493                   </div>
++ new:   494 
++ new:   495                   <div class="col-12 col-md-6">
++ new:   496                     <label class="form-label mb-1">Corner Slowdown</label>
++ new:   497                     <input id="pl_cslow" type="number" class="form-control" min="0.05" max="1.0" step="0.01">
++ new:   498                     <div class="small text-muted mt-1">Wie stark Ecken abbremsen. Höher = sicherer, niedriger = schneller.</div>
++ new:   499                   </div>
++ new:   500                   <div class="col-12 col-md-6">
++ new:   501                     <label class="form-label mb-1">Min Corner Factor</label>
++ new:   502                     <input id="pl_mincf" type="number" class="form-control" min="0.05" max="1.0" step="0.01">
++ new:   503                     <div class="small text-muted mt-1">Untergrenze für Eck-Speed (zu niedrig = kann stottern).</div>
++ new:   504                   </div>
++ new:   505 
++ new:   506                   <div class="col-12 col-md-6">
++ new:   507                     <label class="form-label mb-1">Min Segment Len (mm)</label>
++ new:   508                     <input id="pl_minlen" type="number" class="form-control" min="0.0" max="5.0" step="0.01">
++ new:   509                     <div class="small text-muted mt-1">Unterhalb davon wird Corner-Slowdown nicht nochmals angewendet.</div>
++ new:   510                   </div>
++ new:   511                   <div class="col-12 col-md-6">
++ new:   512                     <label class="form-label mb-1">Collinear (deg)</label>
++ new:   513                     <input id="pl_coldeg" type="number" class="form-control" min="0.1" max="20.0" step="0.1">
++ new:   514                     <div class="small text-muted mt-1">Winkelgrenze für „fast gerade“. Wird für Vereinfachungen genutzt.</div>
++ new:   515                   </div>
++ new:   516 
++ new:   517                   <div class="col-12 col-md-6">
++ new:   518                     <label class="form-label mb-1">Backlash X (mm)</label>
++ new:   519                     <input id="pl_blx" type="number" class="form-control" min="0.0" max="5.0" step="0.01">
++ new:   520                     <div class="small text-muted mt-1">Nur wenn mechanisch nötig. Falsch = Ecken versetzt.</div>
++ new:   521                   </div>
++ new:   522                   <div class="col-12 col-md-6">
++ new:   523                     <label class="form-label mb-1">Backlash Y (mm)</label>
++ new:   524                     <input id="pl_bly" type="number" class="form-control" min="0.0" max="5.0" step="0.01">
++ new:   525                     <div class="small text-muted mt-1">Nur wenn mechanisch nötig. Standard 0.</div>
++ new:   526                   </div>
++ new:   527                 </div>
++ new:   528 
++ new:   529                 <div class="d-flex gap-2 mt-3">
++ new:   530                   <button class="btn btn-outline-light" id="plannerLoadBtn" type="button">Laden</button>
++ new:   531                   <button class="btn btn-primary" id="plannerSaveBtn" type="button">Speichern</button>
++ new:   532                   <div class="ms-auto small text-muted align-self-center" id="plannerStatusText">—</div>
++ new:   533                 </div>
++ new:   534               </div>
++ new:   535             </section>
++ new:   536 
+HUNK old 514-622  new 605-611
+- old:   517             
+- old:   518             <!-- SECTION: PLANNER (QUALITY / SPEED) -->
+- old:   519             <section class="tools-section mt-4" id="toolsSecPlanner">
+- old:   520               <div class="section-title d-flex align-items-center justify-content-between border-bottom pb-2 mb-3">
+- old:   521                 <div>
+- old:   522                   <div class="small text-uppercase text-muted fw-semibold">Tuning</div>
+- old:   523                   <h6 class="mb-0 fw-semibold">Planner (Schnell ↔ Qualität)</h6>
+- old:   524                 </div>
+- old:   525                 <span class="badge bg-secondary">Live</span>
+- old:   526               </div>
+- old:   527 
+- old:   528               <div class="card glass-card p-3">
+- old:   529                 <div class="d-flex align-items-center justify-content-between">
+- old:   530                   <div class="fw-semibold">Gesamtprofil</div>
+- old:   531                   <span class="badge bg-light text-dark" id="plannerProfileLabel">Custom</span>
+- old:   532                 </div>
+- old:   533                 <div class="text-muted small mb-2">
+- old:   534                   Ein Slider steuert alle Planner-Werte gleichzeitig. Danach kannst du jeden Wert einzeln feinjustieren.
+- old:   535                 </div>
+- old:   536 
+- old:   537                 <label class="form-label d-flex justify-content-between align-items-center mb-1">
+- old:   538                   <span>Schnell</span>
+- old:   539                   <span>Qualität</span>
+- old:   540                 </label>
+- old:   541                 <input id="plannerMaster" type="range" class="form-range" min="0" max="100" step="1" value="70">
+- old:   542 
+- old:   543                 <div class="row g-3 mt-2">
+- old:   544 
+- old:   545                   <div class="col-12 col-md-6">
+- old:   546                     <label class="form-label mb-1">Junction Deviation (mm)</label>
+- old:   547                     <input id="plJunctionDeviation" type="number" class="form-control" step="0.001" min="0.001" max="0.5">
+- old:   548                     <div class="text-muted small">Kleiner = präziser (weniger Eckenrundung), aber langsamer/ruckelanfälliger.</div>
+- old:   549                   </div>
+- old:   550 
+- old:   551                   <div class="col-12 col-md-6">
+- old:   552                     <label class="form-label mb-1">Lookahead Segments</label>
+- old:   553                     <input id="plLookahead" type="number" class="form-control" step="1" min="8" max="200">
+- old:   554                     <div class="text-muted small">Mehr = bessere Vorschau (saubere Geschwindigkeit über Ecken), aber mehr Rechenlast.</div>
+- old:   555                   </div>
+- old:   556 
+- old:   557                   <div class="col-12 col-md-6">
+- old:   558                     <label class="form-label mb-1">Min Segment Time (ms)</label>
+- old:   559                     <input id="plMinSegMs" type="number" class="form-control" step="1" min="1" max="20">
+- old:   560                     <div class="text-muted small">Höher = stabiler bei Mini-Segmenten, aber kann die Max-Speed begrenzen.</div>
+- old:   561                   </div>
+- old:   562 
+- old:   563                   <div class="col-12 col-md-6">
+- old:   564                     <label class="form-label mb-1">Min Segment Length (mm)</label>
+- old:   565                     <input id="plMinSegLen" type="number" class="form-control" step="0.01" min="0.02" max="2.0">
+- old:   566                     <div class="text-muted small">Kleiner = mehr Detail/Präzision, aber mehr Segmente und Rechenzeit.</div>
+- old:   567                   </div>
+- old:   568 
+- old:   569                   <div class="col-12 col-md-6">
+- old:   570                     <label class="form-label mb-1">Corner Slowdown</label>
+- old:   571                     <input id="plCornerSlowdown" type="number" class="form-control" step="0.01" min="0.10" max="1.00">
+- old:   572                     <div class="text-muted small">Wie stark an Ecken verlangsamt wird. Niedriger = sauberere Ecken, aber langsamer.</div>
+- old:   573                   </div>
+- old:   574 
+- old:   575                   <div class="col-12 col-md-6">
+- old:   576                     <label class="form-label mb-1">Min Corner Factor</label>
+- old:   577                     <input id="plMinCorner" type="number" class="form-control" step="0.01" min="0.05" max="1.00">
+- old:   578                     <div class="text-muted small">Untergrenze der Eck-Geschwindigkeit. Niedriger = bessere Kanten, aber mehr Zeit.</div>
+- old:   579                   </div>
+- old:   580 
+- old:   581                   <div class="col-12 col-md-6">
+- old:   582                     <label class="form-label mb-1">Collinear Threshold (deg)</label>
+- old:   583                     <input id="plCollinear" type="number" class="form-control" step="0.1" min="0.5" max="15">
+- old:   584                     <div class="text-muted small">Kleiner = weniger „Zusammenfassen“ fast gerader Linien (mehr Präzision).</div>
+- old:   585                   </div>
+- old:   586 
+- old:   587                   <div class="col-12 col-md-6">
+- old:   588                     <label class="form-label mb-1">S-Curve Factor</label>
+- old:   589                     <input id="plSCurve" type="number" class="form-control" step="0.01" min="0.0" max="1.0">
+- old:   590                     <div class="text-muted small">Höher = weicheres Beschleunigen/Bremsen (ruhiger), aber weniger „snappy“.</div>
+- old:   591                   </div>
+- old:   592 
+- old:   593                   <div class="col-12 col-md-6">
+- old:   594                     <label class="form-label mb-1">Backlash X (mm)</label>
+- old:   595                     <input id="plBacklashX" type="number" class="form-control" step="0.01" min="0.0" max="5.0">
+- old:   596                     <div class="text-muted small">Nur nutzen, wenn mechanisches Spiel messbar ist. Sonst 0.</div>
+- old:   597                   </div>
+- old:   598 
+- old:   599                   <div class="col-12 col-md-6">
+- old:   600                     <label class="form-label mb-1">Backlash Y (mm)</label>
+- old:   601                     <input id="plBacklashY" type="number" class="form-control" step="0.01" min="0.0" max="5.0">
+- old:   602                     <div class="text-muted small">Nur nutzen, wenn mechanisches Spiel messbar ist. Sonst 0.</div>
+- old:   603                   </div>
+- old:   604 
+- old:   605                 </div>
+- old:   606 
+- old:   607                 <div class="d-flex gap-2 mt-3">
+- old:   608                   <button id="btnLoadPlanner" class="btn btn-outline-primary flex-fill" type="button">Laden</button>
+- old:   609                   <button id="btnSavePlanner" class="btn btn-primary flex-fill" type="button">Speichern</button>
+- old:   610                 </div>
+- old:   611 
+- old:   612                 <div class="text-muted small mt-2">
+- old:   613                   Hinweis: Gespeichert wird in Preferences. Nach Neustart bleiben die Werte aktiv.
+- old:   614                 </div>
+- old:   615               </div>
+- old:   616             </section>
+- old:   617 
+- old:   618 
+- old:   619 <!-- SECTION: FRONTEND PERFORMANCE -->
++ new:   608             <!-- SECTION: FRONTEND PERFORMANCE -->
+
+--- DIFF (line numbers) data/www/main.js ---
+HUNK old 1869-2045  new 1869-1874
+- old:  1872 
+- old:  1873   // Planner config: master profile + individual settings (persisted in firmware)
+- old:  1874   const PL_PROFILES = {
+- old:  1875     fast: {
+- old:  1876       junctionDeviation: 0.08,
+- old:  1877       lookaheadSegments: 24,
+- old:  1878       minSegmentTimeMs: 1,
+- old:  1879       cornerSlowdown: 0.85,
+- old:  1880       minCornerFactor: 0.45,
+- old:  1881       minSegmentLenMM: 0.35,
+- old:  1882       collinearDeg: 6.0,
+- old:  1883       sCurveFactor: 0.20,
+- old:  1884     },
+- old:  1885     quality: {
+- old:  1886       junctionDeviation: 0.01,
+- old:  1887       lookaheadSegments: 96,
+- old:  1888       minSegmentTimeMs: 8,
+- old:  1889       cornerSlowdown: 0.35,
+- old:  1890       minCornerFactor: 0.18,
+- old:  1891       minSegmentLenMM: 0.08,
+- old:  1892       collinearDeg: 1.2,
+- old:  1893       sCurveFactor: 0.75,
+- old:  1894     }
+- old:  1895   };
+- old:  1896 
+- old:  1897   function lerp(a, b, t) { return a + (b - a) * t; }
+- old:  1898   function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+- old:  1899 
+- old:  1900   function plannerSetProfileLabel(text) {
+- old:  1901     const el = document.getElementById("plannerProfileLabel");
+- old:  1902     if (el) el.textContent = text;
+- old:  1903   }
+- old:  1904 
+- old:  1905   function plannerReadInputs() {
+- old:  1906     const getNum = (id) => parseFloat(document.getElementById(id)?.value ?? "");
+- old:  1907     const getInt = (id) => parseInt(document.getElementById(id)?.value ?? "", 10);
+- old:  1908 
+- old:  1909     return {
+- old:  1910       junctionDeviation: getNum("plJunctionDeviation"),
+- old:  1911       lookaheadSegments: getInt("plLookahead"),
+- old:  1912       minSegmentTimeMs: getInt("plMinSegMs"),
+- old:  1913       cornerSlowdown: getNum("plCornerSlowdown"),
+- old:  1914       minCornerFactor: getNum("plMinCorner"),
+- old:  1915       minSegmentLenMM: getNum("plMinSegLen"),
+- old:  1916       collinearDeg: getNum("plCollinear"),
+- old:  1917       backlashXmm: getNum("plBacklashX"),
+- old:  1918       backlashYmm: getNum("plBacklashY"),
+- old:  1919       sCurveFactor: getNum("plSCurve"),
+- old:  1920     };
+- old:  1921   }
+- old:  1922 
+- old:  1923   function plannerWriteInputs(p) {
+- old:  1924     const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+- old:  1925     set("plJunctionDeviation", Number(p.junctionDeviation).toFixed(3));
+- old:  1926     set("plLookahead", Math.round(p.lookaheadSegments));
+- old:  1927     set("plMinSegMs", Math.round(p.minSegmentTimeMs));
+- old:  1928     set("plCornerSlowdown", Number(p.cornerSlowdown).toFixed(2));
+- old:  1929     set("plMinCorner", Number(p.minCornerFactor).toFixed(2));
+- old:  1930     set("plMinSegLen", Number(p.minSegmentLenMM).toFixed(2));
+- old:  1931     set("plCollinear", Number(p.collinearDeg).toFixed(1));
+- old:  1932     set("plBacklashX", Number(p.backlashXmm ?? 0).toFixed(2));
+- old:  1933     set("plBacklashY", Number(p.backlashYmm ?? 0).toFixed(2));
+- old:  1934     set("plSCurve", Number(p.sCurveFactor).toFixed(2));
+- old:  1935   }
+- old:  1936 
+- old:  1937   function plannerApplyMaster(t01) {
+- old:  1938     const t = clamp(t01, 0, 1);
+- old:  1939     const f = PL_PROFILES.fast;
+- old:  1940     const q = PL_PROFILES.quality;
+- old:  1941 
+- old:  1942     const p = {
+- old:  1943       junctionDeviation: lerp(f.junctionDeviation, q.junctionDeviation, t),
+- old:  1944       lookaheadSegments: Math.round(lerp(f.lookaheadSegments, q.lookaheadSegments, t)),
+- old:  1945       minSegmentTimeMs: Math.round(lerp(f.minSegmentTimeMs, q.minSegmentTimeMs, t)),
+- old:  1946       cornerSlowdown: lerp(f.cornerSlowdown, q.cornerSlowdown, t),
+- old:  1947       minCornerFactor: lerp(f.minCornerFactor, q.minCornerFactor, t),
+- old:  1948       minSegmentLenMM: lerp(f.minSegmentLenMM, q.minSegmentLenMM, t),
+- old:  1949       collinearDeg: lerp(f.collinearDeg, q.collinearDeg, t),
+- old:  1950       sCurveFactor: lerp(f.sCurveFactor, q.sCurveFactor, t),
+- old:  1951       // keep backlash as-is (user/mechanics specific)
+- old:  1952       ...(() => {
+- old:  1953         const cur = plannerReadInputs();
+- old:  1954         return { backlashXmm: cur.backlashXmm || 0.0, backlashYmm: cur.backlashYmm || 0.0 };
+- old:  1955       })()
+- old:  1956     };
+- old:  1957 
+- old:  1958     plannerWriteInputs(p);
+- old:  1959 
+- old:  1960     if (t <= 0.01) plannerSetProfileLabel("Schnell");
+- old:  1961     else if (t >= 0.99) plannerSetProfileLabel("Qualität");
+- old:  1962     else plannerSetProfileLabel("Balanced");
+- old:  1963   }
+- old:  1964 
+- old:  1965   async function plannerLoadFromStatus() {
+- old:  1966     try {
+- old:  1967       const st = await $.get("/status");
+- old:  1968       const pl = st && st.planner ? st.planner : null;
+- old:  1969       if (!pl) return;
+- old:  1970 
+- old:  1971       // Firmware uses these keys: junctionDeviationMM etc.
+- old:  1972       const p = {
+- old:  1973         junctionDeviation: pl.junctionDeviationMM,
+- old:  1974         lookaheadSegments: pl.lookaheadSegments,
+- old:  1975         minSegmentTimeMs: pl.minSegmentTimeMs,
+- old:  1976         cornerSlowdown: pl.cornerSlowdown,
+- old:  1977         minCornerFactor: pl.minCornerFactor,
+- old:  1978         minSegmentLenMM: pl.minSegmentLenMM,
+- old:  1979         collinearDeg: pl.collinearDeg,
+- old:  1980         backlashXmm: pl.backlashXmm,
+- old:  1981         backlashYmm: pl.backlashYmm,
+- old:  1982         sCurveFactor: pl.sCurveFactor,
+- old:  1983       };
+- old:  1984 
+- old:  1985       plannerWriteInputs(p);
+- old:  1986       plannerSetProfileLabel("Custom");
+- old:  1987     } catch (e) {
+- old:  1988       console.warn("planner load failed", e);
+- old:  1989     }
+- old:  1990   }
+- old:  1991 
+- old:  1992   function plannerSaveToFirmware() {
+- old:  1993     const p = plannerReadInputs();
+- old:  1994 
+- old:  1995     // basic validation
+- old:  1996     if (!isFinite(p.junctionDeviation) || !isFinite(p.cornerSlowdown) || !isFinite(p.minCornerFactor) ||
+- old:  1997         !isFinite(p.minSegmentLenMM) || !isFinite(p.collinearDeg) || !isFinite(p.sCurveFactor)) {
+- old:  1998       alert("Planner: ungültige Werte");
+- old:  1999       return;
+- old:  2000     }
+- old:  2001 
+- old:  2002     $.post("/setPlannerConfig", {
+- old:  2003       junctionDeviation: p.junctionDeviation,
+- old:  2004       lookaheadSegments: p.lookaheadSegments,
+- old:  2005       minSegmentTimeMs: p.minSegmentTimeMs,
+- old:  2006       cornerSlowdown: p.cornerSlowdown,
+- old:  2007       minCornerFactor: p.minCornerFactor,
+- old:  2008       minSegmentLenMM: p.minSegmentLenMM,
+- old:  2009       collinearDeg: p.collinearDeg,
+- old:  2010       backlashXmm: p.backlashXmm,
+- old:  2011       backlashYmm: p.backlashYmm,
+- old:  2012       sCurveFactor: p.sCurveFactor,
+- old:  2013     })
+- old:  2014     .done(() => alert("Planner gespeichert"))
+- old:  2015     .fail(() => alert("Planner speichern fehlgeschlagen"));
+- old:  2016   }
+- old:  2017 
+- old:  2018   // bind planner UI
+- old:  2019   if (document.getElementById("plannerMaster")) {
+- old:  2020     document.getElementById("plannerMaster").addEventListener("input", (ev) => {
+- old:  2021       const v = parseInt(ev.target.value, 10);
+- old:  2022       plannerApplyMaster(v / 100.0);
+- old:  2023     });
+- old:  2024 
+- old:  2025     // any manual change => Custom label
+- old:  2026     const ids = [
+- old:  2027       "plJunctionDeviation","plLookahead","plMinSegMs","plCornerSlowdown","plMinCorner",
+- old:  2028       "plMinSegLen","plCollinear","plBacklashX","plBacklashY","plSCurve"
+- old:  2029     ];
+- old:  2030     ids.forEach(id => {
+- old:  2031       const el = document.getElementById(id);
+- old:  2032       if (!el) return;
+- old:  2033       el.addEventListener("change", () => plannerSetProfileLabel("Custom"));
+- old:  2034     });
+- old:  2035 
+- old:  2036     document.getElementById("btnLoadPlanner")?.addEventListener("click", plannerLoadFromStatus);
+- old:  2037     document.getElementById("btnSavePlanner")?.addEventListener("click", plannerSaveToFirmware);
+- old:  2038 
+- old:  2039     // initial fill
+- old:  2040     plannerLoadFromStatus();
+- old:  2041   }
+- old:  2042 
+HUNK old 4237-4239  new 4066-4199
++ new:  4069 
++ new:  4070 
++ new:  4071   // ===== Planner UI (Gear menu) =====
++ new:  4072   function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
++ new:  4073   function lerp(a,b,t){ return a + (b-a)*t; }
++ new:  4074   function lerpInt(a,b,t){ return Math.round(lerp(a,b,t)); }
++ new:  4075 
++ new:  4076   function plannerProfileFromMaster(master){
++ new:  4077     const t = clamp(master/100.0, 0.0, 1.0);
++ new:  4078 
++ new:  4079     // 0 = fast, 1 = quality
++ new:  4080     const fast = {
++ new:  4081       junctionDeviation: 0.15,
++ new:  4082       lookaheadSegments: 16,
++ new:  4083       minSegmentTimeMs: 0,
++ new:  4084       cornerSlowdown: 0.20,
++ new:  4085       minCornerFactor: 0.55,
++ new:  4086       minSegmentLenMM: 0.50,
++ new:  4087       collinearDeg: 6.0,
++ new:  4088       backlashXmm: 0.0,
++ new:  4089       backlashYmm: 0.0,
++ new:  4090       sCurveFactor: 0.10
++ new:  4091     };
++ new:  4092 
++ new:  4093     const qual = {
++ new:  4094       junctionDeviation: 0.01,
++ new:  4095       lookaheadSegments: 96,
++ new:  4096       minSegmentTimeMs: 6,
++ new:  4097       cornerSlowdown: 0.65,
++ new:  4098       minCornerFactor: 0.20,
++ new:  4099       minSegmentLenMM: 0.10,
++ new:  4100       collinearDeg: 1.5,
++ new:  4101       backlashXmm: 0.0,
++ new:  4102       backlashYmm: 0.0,
++ new:  4103       sCurveFactor: 0.75
++ new:  4104     };
++ new:  4105 
++ new:  4106     return {
++ new:  4107       junctionDeviation: parseFloat(lerp(fast.junctionDeviation, qual.junctionDeviation, t).toFixed(3)),
++ new:  4108       lookaheadSegments: lerpInt(fast.lookaheadSegments, qual.lookaheadSegments, t),
++ new:  4109       minSegmentTimeMs: lerpInt(fast.minSegmentTimeMs, qual.minSegmentTimeMs, t),
++ new:  4110       cornerSlowdown: parseFloat(lerp(fast.cornerSlowdown, qual.cornerSlowdown, t).toFixed(2)),
++ new:  4111       minCornerFactor: parseFloat(lerp(fast.minCornerFactor, qual.minCornerFactor, t).toFixed(2)),
++ new:  4112       minSegmentLenMM: parseFloat(lerp(fast.minSegmentLenMM, qual.minSegmentLenMM, t).toFixed(2)),
++ new:  4113       collinearDeg: parseFloat(lerp(fast.collinearDeg, qual.collinearDeg, t).toFixed(1)),
++ new:  4114       backlashXmm: 0.0,
++ new:  4115       backlashYmm: 0.0,
++ new:  4116       sCurveFactor: parseFloat(lerp(fast.sCurveFactor, qual.sCurveFactor, t).toFixed(2)),
++ new:  4117     };
++ new:  4118   }
++ new:  4119 
++ new:  4120   function plannerSetInputs(p){
++ new:  4121     $("#pl_jd").val(p.junctionDeviation);
++ new:  4122     $("#pl_look").val(p.lookaheadSegments);
++ new:  4123     $("#pl_minms").val(p.minSegmentTimeMs);
++ new:  4124     $("#pl_cslow").val(p.cornerSlowdown);
++ new:  4125     $("#pl_mincf").val(p.minCornerFactor);
++ new:  4126     $("#pl_minlen").val(p.minSegmentLenMM);
++ new:  4127     $("#pl_coldeg").val(p.collinearDeg);
++ new:  4128     $("#pl_blx").val(p.backlashXmm);
++ new:  4129     $("#pl_bly").val(p.backlashYmm);
++ new:  4130     $("#pl_scurve").val(p.sCurveFactor);
++ new:  4131   }
++ new:  4132 
++ new:  4133   async function plannerLoadFromDevice(){
++ new:  4134     $("#plannerStatusText").text("Lade...");
++ new:  4135     try{
++ new:  4136       const r = await fetch("/status");
++ new:  4137       const j = await r.json();
++ new:  4138       const p = (j && j.planner) ? j.planner : null;
++ new:  4139       if (!p) { $("#plannerStatusText").text("Keine Planner-Daten"); return; }
++ new:  4140       plannerSetInputs({
++ new:  4141         junctionDeviation: p.junctionDeviation,
++ new:  4142         lookaheadSegments: p.lookaheadSegments,
++ new:  4143         minSegmentTimeMs: p.minSegmentTimeMs,
++ new:  4144         cornerSlowdown: p.cornerSlowdown,
++ new:  4145         minCornerFactor: p.minCornerFactor,
++ new:  4146         minSegmentLenMM: p.minSegmentLenMM,
++ new:  4147         collinearDeg: p.collinearDeg,
++ new:  4148         backlashXmm: p.backlashXmm,
++ new:  4149         backlashYmm: p.backlashYmm,
++ new:  4150         sCurveFactor: p.sCurveFactor
++ new:  4151       });
++ new:  4152       $("#plannerStatusText").text("OK");
++ new:  4153     }catch(e){
++ new:  4154       $("#plannerStatusText").text("Fehler");
++ new:  4155     }
++ new:  4156   }
++ new:  4157 
++ new:  4158   async function plannerSaveToDevice(){
++ new:  4159     const p = {
++ new:  4160       junctionDeviation: parseFloat($("#pl_jd").val()),
++ new:  4161       lookaheadSegments: parseInt($("#pl_look").val(), 10),
++ new:  4162       minSegmentTimeMs: parseInt($("#pl_minms").val(), 10),
++ new:  4163       cornerSlowdown: parseFloat($("#pl_cslow").val()),
++ new:  4164       minCornerFactor: parseFloat($("#pl_mincf").val()),
++ new:  4165       minSegmentLenMM: parseFloat($("#pl_minlen").val()),
++ new:  4166       collinearDeg: parseFloat($("#pl_coldeg").val()),
++ new:  4167       backlashXmm: parseFloat($("#pl_blx").val()),
++ new:  4168       backlashYmm: parseFloat($("#pl_bly").val()),
++ new:  4169       sCurveFactor: parseFloat($("#pl_scurve").val())
++ new:  4170     };
++ new:  4171 
++ new:  4172     $("#plannerStatusText").text("Speichere...");
++ new:  4173     try{
++ new:  4174       await $.post("/setPlannerConfig", p);
++ new:  4175       $("#plannerStatusText").text("Gespeichert");
++ new:  4176     }catch(e){
++ new:  4177       $("#plannerStatusText").text("Fehler beim Speichern");
++ new:  4178     }
++ new:  4179   }
++ new:  4180 
++ new:  4181   // larger slider usable range: show value live
++ new:  4182   $("#plannerMaster").on("input change", function(){
++ new:  4183     const v = parseInt($(this).val(), 10) || 0;
++ new:  4184     $("#plannerMasterValue").text(v);
++ new:  4185     const prof = plannerProfileFromMaster(v);
++ new:  4186     plannerSetInputs(prof);
++ new:  4187   });
++ new:  4188 
++ new:  4189   $("#plannerLoadBtn").click(function(){ plannerLoadFromDevice(); });
++ new:  4190   $("#plannerSaveBtn").click(function(){ plannerSaveToDevice(); });
++ new:  4191 
++ new:  4192   // load planner when tools modal opens
++ new:  4193   toolsModal.addEventListener('shown.bs.modal', function () {
++ new:  4194     if ($("#toolsSecPlanner").length) {
++ new:  4195       plannerLoadFromDevice();
++ new:  4196       const v = parseInt($("#plannerMaster").val(),10) || 50;
++ new:  4197       $("#plannerMasterValue").text(v);
++ new:  4198     }
++ new:  4199   });
+
+CHANGELOG: C:\p\c++\vPlotterV1\CHANGELOG_unknown_20260223_015600.md
+INSTALL DONE
