@@ -5,6 +5,7 @@
 #include "display.h"
 #include "movement.h"
 #include "service/weblog.h"
+#include <algorithm>
 
 int printSpeedSteps = 1200;
 int moveSpeedSteps = 2000;
@@ -303,7 +304,7 @@ double Movement::computeCornerFactor(double dx, double dy, double requestedSpeed
         const double denom = 1.0 - sinHalf;
         if (sinHalf > 1e-6 && denom > 1e-6) {
             const double jdSteps = (double)std::max(1, mmToSteps(plannerCfg.junctionDeviationMM));
-            const double a = (double)std::max(1.0f, accelerationSteps);
+            const double a = ((double)accelerationSteps < 1.0) ? 1.0 : (double)accelerationSteps;
             const double vJ = sqrt((a * jdSteps * sinHalf) / denom);
             double jdFactor = vJ / requestedSpeedSteps;
             if (jdFactor < 0.05) jdFactor = 0.05;
