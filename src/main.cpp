@@ -332,9 +332,11 @@ static void registerPulseWidthEndpoints(AsyncWebServer* server)
     req->send(200, "application/json; charset=utf-8", out);
   });
 
+
   server->on("/setPulseWidths", HTTP_POST, [](AsyncWebServerRequest* req) {
     if (!req->hasParam("leftUs", true) || !req->hasParam("rightUs", true)) {
-      req->send(400, "application/json", "{\"ok\":false,\"error\":\"Missing leftUs/rightUs\"}");
+      req->send(400, "application/json; charset=utf-8",
+                "{\"ok\":false,\"error\":\"Missing leftUs/rightUs\"}");
       return;
     }
 
@@ -346,19 +348,33 @@ static void registerPulseWidthEndpoints(AsyncWebServer* server)
     if (l > 2000) l = 2000;
     if (r > 2000) r = 2000;
 
+    // Always store what UI asked for (so UI remains consistent)
     prefs.putInt(PREF_KEY_PULSE_L, l);
     prefs.putInt(PREF_KEY_PULSE_R, r);
 
-    WebLog::info(String("Pulse widths saved: left=") + l + "us right=" + r + "us");
+    // Apply only if supported by backend
+  #if defined(USE_FAST_ACCELSTEPPER) && (USE_FAST_ACCELSTEPPER == 1)
+    WebLog::info(String("Pulse widths saved but ignored (FastAccelStepper): left=") + l + "us right=" + r + "us");
+    const bool applied = false;
+  #else
+    if (movement) movement->setPulseWidths(l, r);
+    WebLog::info(String("Pulse widths applied (AccelStepper): left=") + l + "us right=" + r + "us");
+    const bool applied = true;
+  #endif
 
-    StaticJsonDocument<128> doc;
+    StaticJsonDocument<160> doc;
     doc["ok"] = true;
     doc["leftUs"] = l;
     doc["rightUs"] = r;
+    doc["applied"] = applied;
+    if (!applied) doc["note"] = "FastAccelStepper ignores pulse width (hardware-timed pulses)";
+
     String out;
     serializeJson(doc, out);
     req->send(200, "application/json; charset=utf-8", out);
   });
+
+
 }
 
 static void registerDiagnosticsEndpoints(AsyncWebServer* server)
