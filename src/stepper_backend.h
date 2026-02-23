@@ -11,10 +11,21 @@
 #define USE_FAST_ACCELSTEPPER 0
 #endif
 
+// Be defensive: if the library is not installed but the flag is set, fall back to AccelStepper.
+// This prevents "it builds on my machine" surprises.
 #if USE_FAST_ACCELSTEPPER
-  #include <FastAccelStepper.h>
+  #if __has_include(<FastAccelStepper.h>)
+    #include <FastAccelStepper.h>
+    #define STEPPER_BACKEND_HAS_FAST 1
+  #else
+    #include <AccelStepper.h>
+    #define STEPPER_BACKEND_HAS_FAST 0
+    #undef USE_FAST_ACCELSTEPPER
+    #define USE_FAST_ACCELSTEPPER 0
+  #endif
 #else
   #include <AccelStepper.h>
+  #define STEPPER_BACKEND_HAS_FAST 0
 #endif
 
 // Minimal interface required by Movement.
