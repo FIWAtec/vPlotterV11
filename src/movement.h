@@ -169,9 +169,6 @@ class Movement {
     // for cornering/backlash
     double lastSegmentDX = 0.0;
     double lastSegmentDY = 0.0;
-
-    // Planner smoothing state. Keeps behaviour stable while allowing lookaheadSegments to matter.
-    double lastCornerFactor = 1.0;
     int lastDirX = 0;
     int lastDirY = 0;
 
@@ -195,7 +192,7 @@ class Movement {
     double solveTorqueEquilibrium(double phi_L, double phi_R, double F_L, double F_R, double gamma_start) const;
     double getDilationCorrectedBeltLength(double belt_length_mm, double F_belt) const;
 
-    double computeCornerFactor(double dx, double dy, double requestedSpeedSteps);
+    double computeCornerFactor(double dx, double dy) const;
 };
 
 #endif

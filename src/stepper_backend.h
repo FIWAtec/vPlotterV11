@@ -2,31 +2,7 @@
 #define STEPPER_BACKEND_H
 
 #include <Arduino.h>
-
-// Backend selector:
-// - When USE_FAST_ACCELSTEPPER is defined (e.g. via build flag -DUSE_FAST_ACCELSTEPPER=1),
-//   the project uses FastAccelStepper (high speed, hardware driven).
-// - Otherwise it uses AccelStepper (existing behaviour).
-#ifndef USE_FAST_ACCELSTEPPER
-#define USE_FAST_ACCELSTEPPER 0
-#endif
-
-// Be defensive: if the library is not installed but the flag is set, fall back to AccelStepper.
-// This prevents "it builds on my machine" surprises.
-#if USE_FAST_ACCELSTEPPER
-  #if __has_include(<FastAccelStepper.h>)
-    #include <FastAccelStepper.h>
-    #define STEPPER_BACKEND_HAS_FAST 1
-  #else
-    #include <AccelStepper.h>
-    #define STEPPER_BACKEND_HAS_FAST 0
-    #undef USE_FAST_ACCELSTEPPER
-    #define USE_FAST_ACCELSTEPPER 0
-  #endif
-#else
-  #include <AccelStepper.h>
-  #define STEPPER_BACKEND_HAS_FAST 0
-#endif
+#include <FastAccelStepper.h>
 
 // Minimal interface required by Movement.
 // This keeps Movement logic intact while swapping stepper libraries.
@@ -47,19 +23,19 @@ public:
   virtual void enableOutputs() = 0;
   virtual void disableOutputs() = 0;
 
-  // optional enable pin wiring (recommended for FastAccelStepper)
+  // optional enable pin wiring
   virtual void configureEnablePin(int enablePin, bool enableActiveLow) = 0;
 
-  virtual void run() = 0;                                // called in loop for AccelStepper; no-op for FastAccelStepper
+  // called from loop; FastAccelStepper runs autonomously (no-op)
+  virtual void run() = 0;
+
   virtual long distanceToGo() const = 0;
   virtual long currentPosition() const = 0;
   virtual void setCurrentPosition(long pos) = 0;
 
-  // Pulse width (AccelStepper only). FastAccelStepper generates its own pulses (few µs) and does not expose setMinPulseWidth.
+  // Pulse width is not configurable with FastAccelStepper. Keep API as no-op for compatibility.
   virtual void setMinPulseWidth(unsigned int us) = 0;
 };
-
-#if USE_FAST_ACCELSTEPPER
 
 // FastAccelStepper uses a global engine
 class FastStepperBackend final : public StepperBackend {
@@ -96,43 +72,7 @@ private:
   uint8_t _dirPin = 255;
   bool _dirInvert = false;
 
-  // We track target, because FastAccelStepper does not expose target position in a lightweight call.
   volatile long _target = 0;
 };
-
-#else
-
-class AccelStepperBackend final : public StepperBackend {
-public:
-  AccelStepperBackend(uint8_t stepPin, uint8_t dirPin);
-
-  void setPinsInverted(bool dirInvert) override;
-
-  void setMaxSpeed(float stepsPerSecond) override;
-  void setAcceleration(float stepsPerSecond2) override;
-
-  void setSpeed(float stepsPerSecond) override;
-  void move(long relativeSteps) override;
-  void moveTo(long absoluteSteps) override;
-  void stop() override;
-
-  void enableOutputs() override;
-  void disableOutputs() override;
-
-  void configureEnablePin(int enablePin, bool enableActiveLow) override;
-
-  void run() override;
-
-  long distanceToGo() const override;
-  long currentPosition() const override;
-  void setCurrentPosition(long pos) override;
-
-  void setMinPulseWidth(unsigned int us) override;
-
-private:
-  AccelStepper _stepper;
-};
-
-#endif
 
 #endif // STEPPER_BACKEND_H

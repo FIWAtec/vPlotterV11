@@ -1,6 +1,5 @@
 #include "stepper_backend.h"
 
-#if USE_FAST_ACCELSTEPPER
 
 static FastAccelStepperEngine* g_engine = nullptr;
 
@@ -112,73 +111,3 @@ void FastStepperBackend::setCurrentPosition(long pos) {
   _target = pos;
 }
 
-#else
-
-AccelStepperBackend::AccelStepperBackend(uint8_t stepPin, uint8_t dirPin)
-  : _stepper(AccelStepper::DRIVER, stepPin, dirPin) {}
-
-void AccelStepperBackend::setPinsInverted(bool dirInvert) {
-  _stepper.setPinsInverted(dirInvert);
-}
-
-void AccelStepperBackend::setMaxSpeed(float stepsPerSecond) {
-  _stepper.setMaxSpeed(stepsPerSecond);
-}
-
-void AccelStepperBackend::setAcceleration(float stepsPerSecond2) {
-  _stepper.setAcceleration(stepsPerSecond2);
-}
-
-void AccelStepperBackend::setSpeed(float stepsPerSecond) {
-  _stepper.setSpeed(stepsPerSecond);
-}
-
-void AccelStepperBackend::move(long relativeSteps) {
-  _stepper.move(relativeSteps);
-}
-
-void AccelStepperBackend::moveTo(long absoluteSteps) {
-  _stepper.moveTo(absoluteSteps);
-}
-
-void AccelStepperBackend::stop() {
-  _stepper.stop();
-}
-
-void AccelStepperBackend::enableOutputs() {
-  _stepper.enableOutputs();
-}
-
-void AccelStepperBackend::disableOutputs() {
-  _stepper.disableOutputs();
-}
-
-void AccelStepperBackend::configureEnablePin(int enablePin, bool enableActiveLow) {
-  if (enablePin < 0) return;
-  // AccelStepper enable pin: LOW disables by default unless inverted.
-  _stepper.setEnablePin(enablePin);
-  // If enable is active LOW, we invert the enable logic.
-  _stepper.setPinsInverted(false, false, enableActiveLow);
-}
-
-void AccelStepperBackend::run() {
-  _stepper.run();
-}
-
-long AccelStepperBackend::distanceToGo() const {
-  return _stepper.distanceToGo();
-}
-
-long AccelStepperBackend::currentPosition() const {
-  return _stepper.currentPosition();
-}
-
-void AccelStepperBackend::setCurrentPosition(long pos) {
-  _stepper.setCurrentPosition(pos);
-}
-
-void AccelStepperBackend::setMinPulseWidth(unsigned int us) {
-  _stepper.setMinPulseWidth(us);
-}
-
-#endif

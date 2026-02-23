@@ -5,7 +5,6 @@
 #include "display.h"
 #include "movement.h"
 #include "service/weblog.h"
-#include <algorithm>
 
 int printSpeedSteps = 1200;
 int moveSpeedSteps = 2000;
@@ -13,22 +12,15 @@ int moveSpeedSteps = 2000;
 Movement::Movement(Display* display) {
     this->display = display;
 
-    #if USE_FAST_ACCELSTEPPER
+        // Always use FastAccelStepper backend
     leftMotor = new FastStepperBackend(LEFT_STEP_PIN, LEFT_DIR_PIN);
-#else
-    leftMotor = new AccelStepperBackend(LEFT_STEP_PIN, LEFT_DIR_PIN);
-#endif
     leftMotor->setMaxSpeed(moveSpeedSteps);
     leftMotor->setAcceleration((float)accelerationSteps);
     leftMotor->setPinsInverted(false);
     leftMotor->setMinPulseWidth(_leftPulseWidthUs);
     leftMotor->disableOutputs();
 
-#if USE_FAST_ACCELSTEPPER
     rightMotor = new FastStepperBackend(RIGHT_STEP_PIN, RIGHT_DIR_PIN);
-#else
-    rightMotor = new AccelStepperBackend(RIGHT_STEP_PIN, RIGHT_DIR_PIN);
-#endif
     rightMotor->setPinsInverted(true);
     rightMotor->setMaxSpeed(moveSpeedSteps);
     rightMotor->setAcceleration((float)accelerationSteps);
@@ -237,10 +229,8 @@ Movement::Lengths Movement::getBeltLengths(const double x, const double y) {
     double phi_L = 0.0, phi_R = 0.0;
     double F_L = 0.0, F_R = 0.0;
 
-    // Higher precision is important when we segment moves into many small XY steps.
-    // Too-loose termination accumulates visible curvature on long straight lines.
-    constexpr int solver_max_iterations = 60;
-    constexpr double gamma_delta_termination = 0.05 / 180.0 * PI;
+    constexpr int solver_max_iterations = 20;
+    constexpr double gamma_delta_termination = 0.25 / 180.0 * PI;
 
     for (int i = 0; i < solver_max_iterations; i++) {
         getBeltAngles(frameX, frameY, gamma, phi_L, phi_R);
@@ -249,7 +239,7 @@ Movement::Lengths Movement::getBeltLengths(const double x, const double y) {
         const double gamma_last = gamma;
         gamma = solveTorqueEquilibrium(phi_L, phi_R, F_L, F_R, gamma);
 
-        if (fabs(gamma_last - gamma) < gamma_delta_termination) break;
+        if (abs(gamma_last - gamma) < gamma_delta_termination) break;
     }
 
     gamma_last_position = gamma;
@@ -270,56 +260,21 @@ Movement::Lengths Movement::getBeltLengths(const double x, const double y) {
     return Lengths(mmToSteps(leftLeg), mmToSteps(rightLeg));
 }
 
-double Movement::computeCornerFactor(double dx, double dy, double requestedSpeedSteps) {
+double Movement::computeCornerFactor(double dx, double dy) const {
     const double len = sqrt(dx * dx + dy * dy);
     const double prevLen = sqrt(lastSegmentDX * lastSegmentDX + lastSegmentDY * lastSegmentDY);
     if (len < 1e-6 || prevLen < 1e-6) return 1.0;
 
-    // Very small segments should not be corner-limited again.
-    if (plannerCfg.minSegmentLenMM > 0.0) {
-        const double lenMm = (double)len / (double)std::max(1, mmToSteps(1.0));
-        if (lenMm < plannerCfg.minSegmentLenMM) return 1.0;
-    }
-
     double dot = (dx * lastSegmentDX + dy * lastSegmentDY) / (len * prevLen);
     dot = std::max(-1.0, std::min(1.0, dot));
     const double angle = acos(dot); // 0 = straight, pi = reverse
-    // Collinear simplification: if almost straight, don't corner-limit.
-    if (plannerCfg.collinearDeg > 0.0) {
-        const double angleDeg = angle * 180.0 / PI;
-        if (angleDeg < plannerCfg.collinearDeg) return 1.0;
-    }
-
     const double sharpness = angle / PI; // 0..1
 
-    // Base slowdown (legacy behaviour)
+    // Junction-deviation style simple scaler
     double f = 1.0 - sharpness * plannerCfg.cornerSlowdown;
     if (f < plannerCfg.minCornerFactor) f = plannerCfg.minCornerFactor;
     if (f > 1.0) f = 1.0;
-
-    // Junction-deviation limit: convert corner angle into a max junction speed and clamp by requested speed.
-    // This makes junctionDeviationMM actually matter.
-    if (plannerCfg.junctionDeviationMM > 0.0 && requestedSpeedSteps > 1.0) {
-        const double sinHalf = sin(angle * 0.5);
-        const double denom = 1.0 - sinHalf;
-        if (sinHalf > 1e-6 && denom > 1e-6) {
-            const double jdSteps = (double)std::max(1, mmToSteps(plannerCfg.junctionDeviationMM));
-            const double a = ((double)accelerationSteps < 1.0) ? 1.0 : (double)accelerationSteps;
-            const double vJ = sqrt((a * jdSteps * sinHalf) / denom);
-            double jdFactor = vJ / requestedSpeedSteps;
-            if (jdFactor < 0.05) jdFactor = 0.05;
-            if (jdFactor > 1.0) jdFactor = 1.0;
-            if (jdFactor < f) f = jdFactor;
-        }
-    }
-
-    // Simple lookahead smoothing: higher lookaheadSegments => smoother factor changes.
-    int n = plannerCfg.lookaheadSegments;
-    if (n < 1) n = 1;
-    if (n > 200) n = 200;
-    const double alpha = 1.0 / (double)std::max(1, n / 8);
-    lastCornerFactor = lastCornerFactor + alpha * (f - lastCornerFactor);
-    return lastCornerFactor;
+    return f;
 }
 
 float Movement::beginLinearTravel(double x, double y, int speed) {
@@ -366,7 +321,7 @@ const auto lengths = getBeltLengths(tx, ty);
     }
 
     // Dynamic feed from geometry/cornering
-    double cornerFactor = computeCornerFactor(dx, dy, (double)speed);
+    double cornerFactor = computeCornerFactor(dx, dy);
     double targetSpeed = speed * cornerFactor;
 
     // minimum segment-time clamp
