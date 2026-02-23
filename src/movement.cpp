@@ -1,4 +1,4 @@
-#include <math.h>
+#include <cmath>
 #include <stdexcept>
 #include <algorithm>
 
@@ -12,19 +12,19 @@ int moveSpeedSteps = 2000;
 Movement::Movement(Display* display) {
     this->display = display;
 
-        // Always use FastAccelStepper backend
+    // FastAccelStepper backend (no AccelStepper usage anywhere in Movement)
     leftMotor = new FastStepperBackend(LEFT_STEP_PIN, LEFT_DIR_PIN);
+    leftMotor->setPinsInverted(false);
     leftMotor->setMaxSpeed(moveSpeedSteps);
     leftMotor->setAcceleration((float)accelerationSteps);
-    leftMotor->setPinsInverted(false);
-    leftMotor->setMinPulseWidth(_leftPulseWidthUs);
+    leftMotor->setMinPulseWidth(_leftPulseWidthUs); // no-op on FastAccelStepper, kept for API compatibility
     leftMotor->disableOutputs();
 
     rightMotor = new FastStepperBackend(RIGHT_STEP_PIN, RIGHT_DIR_PIN);
     rightMotor->setPinsInverted(true);
     rightMotor->setMaxSpeed(moveSpeedSteps);
     rightMotor->setAcceleration((float)accelerationSteps);
-    rightMotor->setMinPulseWidth(_rightPulseWidthUs);
+    rightMotor->setMinPulseWidth(_rightPulseWidthUs); // no-op on FastAccelStepper, kept for API compatibility
     rightMotor->disableOutputs();
 
     topDistance = -1;
@@ -92,31 +92,48 @@ void Movement::setOrigin() {
 }
 
 void Movement::leftStepper(const int dir) {
+    if (!leftMotor) return;
+
+    leftMotor->enableOutputs();
+    leftMotor->setMinPulseWidth(_leftPulseWidthUs);
+
+    const float accel = (float)std::max(1.0, (double)accelerationSteps);
+    const float vmax  = (float)std::max(1, printSpeedSteps);
+
+    leftMotor->setAcceleration(accel);
+    leftMotor->setMaxSpeed(vmax);
+
     if (dir > 0) {
         leftMotor->move(infiniteStepsSteps);
-        leftMotor->setSpeed(printSpeedSteps);
     } else if (dir < 0) {
         leftMotor->move(-infiniteStepsSteps);
-        leftMotor->setSpeed(printSpeedSteps);
     } else {
-        leftMotor->setAcceleration((float)accelerationSteps);
         leftMotor->stop();
     }
+
     moving = true;
 }
 
 void Movement::rightStepper(const int dir) {
+    if (!rightMotor) return;
+
+    rightMotor->enableOutputs();
+    rightMotor->setMinPulseWidth(_rightPulseWidthUs);
+
+    const float accel = (float)std::max(1.0, (double)accelerationSteps);
+    const float vmax  = (float)std::max(1, printSpeedSteps);
+
+    rightMotor->setAcceleration(accel);
+    rightMotor->setMaxSpeed(vmax);
+
     if (dir > 0) {
         rightMotor->move(infiniteStepsSteps);
-        rightMotor->setSpeed(printSpeedSteps);
     } else if (dir < 0) {
         rightMotor->move(-infiniteStepsSteps);
-        rightMotor->setSpeed(printSpeedSteps);
     } else {
-        rightMotor->setAcceleration((float)accelerationSteps);
-        rightMotor->setMinPulseWidth(_rightPulseWidthUs);
         rightMotor->stop();
     }
+
     moving = true;
 }
 
@@ -187,14 +204,12 @@ double Movement::solveTorqueEquilibrium(const double phi_L, const double phi_R, 
     double gamma_best = 99999999;
     double T_delta_best = 99999999;
 
-    // Smaller step improves straightness when many tiny XY segments are executed
-    constexpr double gamma_step = 0.05 * PI / 180.0;
+    constexpr double gamma_step = 0.20 * PI / 180.0;
     constexpr double gamma_min = -90.0 * PI / 180.0;
     constexpr double gamma_max = 90.0 * PI / 180.0;
     constexpr double gamma_search_window = 2.0 * PI / 180.0;
 
-    // Scan full window and pick best. Do NOT early-return on first "worse" sample.
-    for (double gamma = gamma_init - gamma_search_window; gamma >= gamma_min && gamma <= gamma_max && gamma <= gamma_init + gamma_search_window; gamma += gamma_step) {
+    for (double gamma = gamma_init - gamma_search_window; gamma > gamma_min && gamma < gamma_max && gamma <= gamma_init + gamma_search_window; gamma += gamma_step) {
         const double alpha = phi_L - gamma;
         const double beta = phi_R + gamma;
 
@@ -208,9 +223,11 @@ double Movement::solveTorqueEquilibrium(const double phi_L, const double phi_R, 
 
         const double T_delta = T_R - T_L + T_m;
 
-        if (fabs(T_delta) < fabs(T_delta_best)) {
+        if (abs(T_delta) < abs(T_delta_best)) {
             T_delta_best = T_delta;
             gamma_best = gamma;
+        } else {
+            return gamma_best;
         }
     }
     return gamma_best;
@@ -284,29 +301,20 @@ float Movement::beginLinearTravel(double x, double y, int speed) {
     if (speed <= 0) throw std::invalid_argument("Invalid speed");
 
     // Backlash compensation in XY when direction flips
-double tx = x;
-double ty = y;
+    double tx = x;
+    double ty = y;
+    const double dx = tx - X;
+    const double dy = ty - Y;
+    int dirX = (dx > 1e-6) ? 1 : ((dx < -1e-6) ? -1 : 0);
+    int dirY = (dy > 1e-6) ? 1 : ((dy < -1e-6) ? -1 : 0);
 
-// Direction based on original target (before backlash), so compensation triggers reliably.
-double dx0 = tx - X;
-double dy0 = ty - Y;
-int dirX0 = (dx0 > 1e-6) ? 1 : ((dx0 < -1e-6) ? -1 : 0);
-int dirY0 = (dy0 > 1e-6) ? 1 : ((dy0 < -1e-6) ? -1 : 0);
+    if (lastDirX != 0 && dirX != 0 && dirX != lastDirX) tx += dirX * plannerCfg.backlashXmm;
+    if (lastDirY != 0 && dirY != 0 && dirY != lastDirY) ty += dirY * plannerCfg.backlashYmm;
 
-if (lastDirX != 0 && dirX0 != 0 && dirX0 != lastDirX) tx += dirX0 * plannerCfg.backlashXmm;
-if (lastDirY != 0 && dirY0 != 0 && dirY0 != lastDirY) ty += dirY0 * plannerCfg.backlashYmm;
+    tx = std::max(0.0, std::min(width, tx));
+    if (ty < 0.0) ty = 0.0;
 
-// Clamp
-tx = std::max(0.0, std::min(width, tx));
-if (ty < 0.0) ty = 0.0;
-
-// IMPORTANT: recompute segment vector after backlash/clamp. This is the real movement.
-const double dx = tx - X;
-const double dy = ty - Y;
-int dirX = (dx > 1e-6) ? 1 : ((dx < -1e-6) ? -1 : 0);
-int dirY = (dy > 1e-6) ? 1 : ((dy < -1e-6) ? -1 : 0);
-
-const auto lengths = getBeltLengths(tx, ty);
+    const auto lengths = getBeltLengths(tx, ty);
     const int leftLegSteps = lengths.left;
     const int rightLegSteps = lengths.right;
 
@@ -333,42 +341,29 @@ const auto lengths = getBeltLengths(tx, ty);
 
     if (targetSpeed < 1.0) targetSpeed = 1.0;
 
-double accelScale = 1.0 - ((1.0 - cornerFactor) * plannerCfg.sCurveFactor);
-if (accelScale < 0.2) accelScale = 0.2;
+    // Approximate S-curve by lowering accel around corners
+    double accelScale = 1.0 - ((1.0 - cornerFactor) * plannerCfg.sCurveFactor);
+    if (accelScale < 0.2) accelScale = 0.2;
+    const float localAccel = (float)std::max(1.0, (double)accelerationSteps * accelScale);
+leftMotor->setAcceleration(localAccel);
+    rightMotor->setAcceleration(localAccel);
 
-const float localAccelBase = (float)std::max(1.0, accelerationSteps * accelScale);
-
-const float moveTime = (float)maxDelta / (float)targetSpeed;
+    const float moveTime = (float)maxDelta / (float)targetSpeed;
     float leftSpeed = (deltaLeft > 0) ? ((float)deltaLeft / moveTime) : 0.0f;
     float rightSpeed = (deltaRight > 0) ? ((float)deltaRight / moveTime) : 0.0f;
     if (leftSpeed > 0.0f && leftSpeed < 1.0f) leftSpeed = 1.0f;
     if (rightSpeed > 0.0f && rightSpeed < 1.0f) rightSpeed = 1.0f;
 
     leftMotor->enableOutputs();
-rightMotor->enableOutputs();
+    rightMotor->enableOutputs();
 
-leftMotor->setMaxSpeed(leftSpeed);
-rightMotor->setMaxSpeed(rightSpeed);
+    leftMotor->setMaxSpeed(leftSpeed);
+    leftMotor->moveTo(leftLegSteps);
 
-const float refV = (float)targetSpeed;
-float aL = localAccelBase;
-float aR = localAccelBase;
+    rightMotor->setMaxSpeed(rightSpeed);
+    rightMotor->moveTo(rightLegSteps);
 
-if (refV > 1.0f) {
-    aL = localAccelBase * (leftSpeed / refV);
-    aR = localAccelBase * (rightSpeed / refV);
-}
-
-if (aL < 1.0f) aL = 1.0f;
-if (aR < 1.0f) aR = 1.0f;
-
-leftMotor->setAcceleration(aL);
-rightMotor->setAcceleration(aR);
-
-leftMotor->moveTo(leftLegSteps);
-rightMotor->moveTo(rightLegSteps);
-
-X = tx;
+    X = tx;
     Y = ty;
     lastSegmentDX = dx;
     lastSegmentDY = dy;
@@ -451,7 +446,7 @@ void Movement::setMotionTuning(long infiniteSteps, long acceleration) {
 void Movement::setEnablePins(int leftEnablePin, int rightEnablePin) {
   _leftEnablePin = leftEnablePin;
   _rightEnablePin = rightEnablePin;
-  // Enable pin is optional. With FastAccelStepper it is recommended for clean driver enable/disable.
+  // Most stepper drivers use EN as active-low. Keep this consistent.
   if (leftMotor)  leftMotor->configureEnablePin(_leftEnablePin, true);
   if (rightMotor) rightMotor->configureEnablePin(_rightEnablePin, true);
 }
@@ -459,15 +454,19 @@ void Movement::setEnablePins(int leftEnablePin, int rightEnablePin) {
 int Movement::getLeftEnablePin() const { return _leftEnablePin; }
 int Movement::getRightEnablePin() const { return _rightEnablePin; }
 
-void Movement::setPulseWidths(int /*leftUs*/, int /*rightUs*/) {
-  // Fixed pulse width for stability. Do not make this configurable at runtime.
-  const int us = FIXED_PULSE_US;
+void Movement::setPulseWidths(int leftUs, int rightUs) {
+  if (leftUs < 1) leftUs = 1;
+  if (rightUs < 1) rightUs = 1;
+  if (leftUs > 1000) leftUs = 1000;
+  if (rightUs > 1000) rightUs = 1000;
 
-  _leftPulseWidthUs = us;
-  _rightPulseWidthUs = us;
+  _leftPulseWidthUs = leftUs;
+  _rightPulseWidthUs = rightUs;
 
-  if (leftMotor) leftMotor->setMinPulseWidth(us);
-  if (rightMotor) rightMotor->setMinPulseWidth(us);
+  if (leftMotor) leftMotor->setMinPulseWidth(_leftPulseWidthUs);
+  if (rightMotor) rightMotor->setMinPulseWidth(_rightPulseWidthUs);
+
+  WebLog::info("Pulse widths updated: left=" + String(_leftPulseWidthUs) + "us right=" + String(_rightPulseWidthUs) + "us");
 }
 
 int Movement::getLeftPulseWidthUs() const { return _leftPulseWidthUs; }
