@@ -455,18 +455,14 @@ int Movement::getLeftEnablePin() const { return _leftEnablePin; }
 int Movement::getRightEnablePin() const { return _rightEnablePin; }
 
 void Movement::setPulseWidths(int leftUs, int rightUs) {
-  if (leftUs < 1) leftUs = 1;
-  if (rightUs < 1) rightUs = 1;
-  if (leftUs > 1000) leftUs = 1000;
-  if (rightUs > 1000) rightUs = 1000;
-
-  _leftPulseWidthUs = leftUs;
-  _rightPulseWidthUs = rightUs;
-
-  if (leftMotor) leftMotor->setMinPulseWidth(_leftPulseWidthUs);
-  if (rightMotor) rightMotor->setMinPulseWidth(_rightPulseWidthUs);
-
-  WebLog::info("Pulse widths updated: left=" + String(_leftPulseWidthUs) + "us right=" + String(_rightPulseWidthUs) + "us");
+#if defined(USE_FAST_ACCELSTEPPER) && (USE_FAST_ACCELSTEPPER == 1)
+    // FastAccelStepper does not support setting min pulse width. Ignore.
+    WebLog::info("Pulse width ignored (FastAccelStepper)");
+    (void)leftUs; (void)rightUs;
+#else
+    if (leftMotor)  leftMotor->setMinPulseWidth(leftUs);
+    if (rightMotor) rightMotor->setMinPulseWidth(rightUs);
+#endif
 }
 
 int Movement::getLeftPulseWidthUs() const { return _leftPulseWidthUs; }

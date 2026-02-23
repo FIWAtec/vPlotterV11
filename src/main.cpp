@@ -56,8 +56,8 @@ Display* display = nullptr;
 PhaseManager* phaseManager = nullptr;
 
 // UI will toggles exactly these two
-constexpr int ENABLE_PIN_A = 27;
-constexpr int ENABLE_PIN_B = 33;
+constexpr int ENABLE_PIN_A = -1;
+constexpr int ENABLE_PIN_B = -1;
 
 constexpr const char* PREF_KEY_LEFT_EN   = "leftEnPin";
 constexpr const char* PREF_KEY_RIGHT_EN  = "rightEnPin";
