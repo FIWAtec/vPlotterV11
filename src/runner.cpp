@@ -7,6 +7,8 @@
 #include <algorithm>
 
 #include "service/weblog.h"
+#include <SD.h>
+#include "sd/sd_commands_bridge.h"
 
 using namespace std;
 
@@ -50,7 +52,9 @@ void Runner::initTaskProvider() {
 
     if (openedFile) openedFile.close();
 
-    openedFile = LittleFS.open("/commands", "r");
+    if (!sdCommandsEnsureMounted()) throw std::invalid_argument("SD not mounted");
+
+    openedFile = SD.open("/commands", FILE_READ);
     if (!openedFile) throw std::invalid_argument("No File");
 
     String line = openedFile.readStringUntil('\n');

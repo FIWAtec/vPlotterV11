@@ -142,6 +142,7 @@ bool lastDown = false;
 
 // --- SD: stabiler Mount + Re-Mount ---
 static bool gSdMounted = false;
+static bool gLittleFsMounted = false;
 static uint32_t gSdLastAttemptMs = 0;
 static SemaphoreHandle_t gSdMutex = nullptr;
 
@@ -278,6 +279,7 @@ static void applyEnablePinsAndSave(int leftPin, int rightPin)
 static void ensureWifiOrAp()
 {
   WiFi.mode(WIFI_STA);
+  WiFi.setHostname("maniac");
 
   WiFiManager wifiManager;
   wifiManager.setConnectTimeout(20);
@@ -293,6 +295,7 @@ static void ensureWifiOrAp()
 
   WebLog::warn("WiFi not connected -> starting AP 'maniac'");
   WiFi.mode(WIFI_AP);
+  WiFi.softAPsetHostname("maniac");
   WiFi.softAP("maniac");
   delay(100);
   WebLog::info(String("AP started, AP_IP=") + WiFi.softAPIP().toString());
@@ -974,9 +977,11 @@ void setup()
 
   delay(200);
 
-  if (!LittleFS.begin(true)) {
-    WebLog::error("LittleFS mount failed");
-    return;
+  gLittleFsMounted = LittleFS.begin(true);
+  if (!gLittleFsMounted) {
+    WebLog::error("LittleFS mount failed (server starts without UI files)");
+  } else {
+    WebLog::info("LittleFS mounted");
   }
 
   display = new Display();
@@ -1026,8 +1031,7 @@ void setup()
 
   ensureWifiOrAp();
 
-  if (!MDNS.begin("maniac")) WebLog::warn("mDNS start failed");
-  else WebLog::info("mDNS started: maniac.local");
+  // mDNS is started after HTTP server begins (more reliable on some ESP32 setups).
 
 #if defined(ESP32)
   setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1);
@@ -1314,7 +1318,7 @@ void setup()
     if (!pen) { request->send(500, "text/plain", "pen not ready"); return; }
     if (!request->hasParam("value", true)) { request->send(400, "text/plain", "missing value"); return; }
     int v = request->getParam("value", true)->value().toInt();
-    v = constrain(v, 0, 7);
+    v = constrain(v, 0, 70);
     pen->setPendingDownAngle(v);
     prefs.putInt(PREF_KEY_PEN_DOWN, v);
     request->send(200, "application/json", String("{\"ok\":true,\"pendingDown\":") + v + "}");
@@ -1356,17 +1360,43 @@ void setup()
   );
 
   server.on("/downloadCommands", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(LittleFS, "/commands", "text/plain");
+    if (!ensureSdMounted(false)) {
+      request->send(503, "text/plain", "SD not available");
+      return;
+    }
+    SdGuard sdg(true);
+    if (!sdg.locked) {
+      request->send(503, "text/plain", "SD busy");
+      return;
+    }
+    if (!SD.exists("/commands")) {
+      request->send(404, "text/plain", "commands not found");
+      return;
+    }
+    request->send(SD, "/commands", "text/plain");
   });
 
-  AsyncStaticWebHandler &h = server.serveStatic("/", LittleFS, "/www/");
-  h.setDefaultFile("index.html");
+  if (gLittleFsMounted) {
+    AsyncStaticWebHandler &h = server.serveStatic("/", LittleFS, "/www/");
+    h.setDefaultFile("index.html");
+  } else {
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *req){
+      req->send(200, "text/plain", "HTTP server running, but LittleFS UI files are not mounted");
+    });
+  }
 
   server.onNotFound(notFound);
 
   WebLog::info("HTTP server starting...");
   server.begin();
   WebLog::info("HTTP server started.");
+
+  if (!MDNS.begin("maniac")) {
+    WebLog::warn("mDNS start failed");
+  } else {
+    MDNS.addService("http", "tcp", 80);
+    WebLog::info("mDNS started: maniac.local");
+  }
 
   const String staIp = WiFi.localIP().toString();
   const String apIp  = WiFi.softAPIP().toString();

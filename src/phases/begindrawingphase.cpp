@@ -1,6 +1,7 @@
 #include "begindrawingphase.h"
-#include "LittleFS.h"
+#include <SD.h>
 #include "service/weblog.h"
+#include "sd/sd_commands_bridge.h"
 
 BeginDrawingPhase::BeginDrawingPhase(PhaseManager* manager, Runner* runner, AsyncWebServer* server) {
     this->manager = manager;
@@ -26,28 +27,39 @@ void BeginDrawingPhase::handleUpload(AsyncWebServerRequest *request, String file
     }
 
     if (!index) {
-        if (LittleFS.exists("/commands")) {
-            LittleFS.remove("/commands");
+        if (!sdCommandsEnsureMounted()) {
+            WebLog::error("SD | not mounted for upload (BeginDrawing)");
+            request->send(503, "text/plain", "SD not available");
+            return;
+        }
+
+        if (SD.exists("/commands")) {
+            SD.remove("/commands");
         }
 
         WebLog::info("BeginDrawing | Upload | size=" + String(request->contentLength()));
-        const size_t freeBytes = (size_t)LittleFS.totalBytes() - (size_t)LittleFS.usedBytes();
+        const size_t freeBytes = (size_t)SD.totalBytes() - (size_t)SD.usedBytes();
         if (freeBytes < request->contentLength()) {
-            WebLog::error("LittleFS | Not enough space for upload (BeginDrawing)");
+            WebLog::error("SD | Not enough space for upload (BeginDrawing)");
             request->send(400, "text/plain", "Not enough space for upload");
             return;
         }
 
-        request->_tempFile = LittleFS.open("/commands", "w");
+        request->_tempFile = SD.open("/commands", FILE_WRITE);
+        if (!request->_tempFile) {
+            WebLog::error("SD | cannot open /commands for write (BeginDrawing)");
+            request->send(500, "text/plain", "SD open failed");
+            return;
+        }
         WebLog::log(LOG_INFO, "Upload started (BeginDrawing)");
     }
 
     if (len) {
-        request->_tempFile.write(data, len);
+        if (request->_tempFile) request->_tempFile.write(data, len);
     }
 
     if (final) {
-        request->_tempFile.close();
+        if (request->_tempFile) request->_tempFile.close();
         WebLog::info("Upload | finished (BeginDrawing)");
         // Wichtig: Phase bleibt BeginDrawing (kein Reset / keine Kalibrier-Schleife).
     }
