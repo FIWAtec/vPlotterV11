@@ -132,6 +132,10 @@ class Movement {
 
     float beginLinearTravel(double x, double y, int speed);
 
+    // Estimate step deltas for an XY target without starting a move.
+    // Used by runner lookahead planner to map between XY mm/s and stepper steps/s.
+    int estimateMaxDeltaSteps(double x, double y, int* outDeltaLeft = nullptr, int* outDeltaRight = nullptr);
+
     void setSpeeds(int newPrintSpeed, int newMoveSpeed);
 
     void extend1000mm();

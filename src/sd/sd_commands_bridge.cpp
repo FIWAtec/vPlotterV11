@@ -3,7 +3,9 @@
 #include <SD.h>
 #include "sd_commands_bridge.h"
 
-// Fallback pins, in case they are not globally defined via build flags
+// This bridge exists because several modules need a simple "SD is mounted" check
+// without depending on main.cpp internals.
+
 #ifndef SD_SCK_PIN
   #define SD_SCK_PIN   14
 #endif
@@ -18,7 +20,6 @@
 #endif
 
 static SPIClass gSdSpi(HSPI);
-
 static bool gMounted = false;
 static uint32_t gLastAttemptMs = 0;
 
@@ -44,7 +45,7 @@ bool sdCommandsEnsureMounted()
 
   if (sdCommandsIsMounted()) return true;
 
-  // throttle retries
+  // throttle retries (keeps UI responsive)
   if ((now - gLastAttemptMs) < 1500) return false;
   gLastAttemptMs = now;
 
@@ -58,10 +59,10 @@ bool sdCommandsEnsureMounted()
   gMounted = SD.begin(SD_CS_PIN, gSdSpi, freq);
   if (!gMounted) return false;
 
-  // final sanity
   if (!sanity()) {
     gMounted = false;
     return false;
   }
+
   return true;
 }

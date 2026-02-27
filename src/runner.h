@@ -62,6 +62,8 @@ private:
     volatile bool abortRequested = false;
 
     std::deque<QueuedCommand> lookaheadQ;
+    std::deque<Movement::Point> pendingMovePoints; // expanded arc points that did not fit in lookahead window
+
     bool eofReached = false;
 
     // Track current pen state so we can select moveSpeedSteps vs printSpeedSteps.

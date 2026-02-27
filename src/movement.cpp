@@ -374,6 +374,29 @@ leftMotor->setAcceleration(localAccel);
     return moveTime;
 }
 
+int Movement::estimateMaxDeltaSteps(double x, double y, int* outDeltaLeft, int* outDeltaRight) {
+    if (topDistance == -1 || !homed) throw std::invalid_argument("not ready");
+    if (x < 0 || (x - 1) > width) throw std::invalid_argument("Invalid x");
+    if (y < 0) throw std::invalid_argument("Invalid y");
+
+    // NOTE: We intentionally do NOT apply backlash compensation here.
+    // This function is for speed mapping in the planner, not for final position correction.
+    const double tx = std::max(0.0, std::min(width, x));
+    const double ty = (y < 0.0) ? 0.0 : y;
+
+    const auto lengths = getBeltLengths(tx, ty);
+    const int leftLegSteps = lengths.left;
+    const int rightLegSteps = lengths.right;
+
+    const int dL = abs((int)leftMotor->currentPosition() - leftLegSteps);
+    const int dR = abs((int)rightMotor->currentPosition() - rightLegSteps);
+
+    if (outDeltaLeft) *outDeltaLeft = dL;
+    if (outDeltaRight) *outDeltaRight = dR;
+
+    return (dL >= dR) ? dL : dR;
+}
+
 double Movement::getWidth() {
     if (topDistance == -1) throw std::invalid_argument("not ready");
     return width;
