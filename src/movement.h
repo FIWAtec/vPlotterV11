@@ -64,6 +64,10 @@ class Movement {
         double minSegmentLenMM;     
         double collinearDeg;        
 
+        // Micro-segment speed limiter (for tiny segments like mini circles)
+        double microSlowLenMM;      // 0..20mm (0 disables)
+        double microMinFactor;      // 0.05..1.0
+
         double backlashXmm;
         double backlashYmm;
 
@@ -77,6 +81,8 @@ class Movement {
             minCornerFactor(0.30),
             minSegmentLenMM(0.20),
             collinearDeg(3.0),
+            microSlowLenMM(0.0),
+            microMinFactor(0.35),
             backlashXmm(0.0),
             backlashYmm(0.0),
             sCurveFactor(0.35) {}

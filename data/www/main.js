@@ -2236,7 +2236,121 @@ $("#uploadSvg").off("change").on("change", async function () {
     }
     $("#acceptSvg").attr("disabled", "disabled");
 
-    const commandsBlob = new Blob([uploadConvertedCommands], { type: "text/plain" });
+    function tryArcFitting(cmdText){
+      try {
+        const minSeg = parseFloat($("#pl_minlen").val());
+        const jd = parseFloat($("#pl_jd").val());
+        const cfg = {
+          minSegmentLenMM: isFinite(minSeg) ? minSeg : 0.2,
+          junctionDeviation: isFinite(jd) ? jd : 0.02,
+        };
+
+        const lines = cmdText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length);
+        if (lines.length < 5) return cmdText;
+
+        const out = [];
+        let lastPt = null;
+
+        const toPt = (l) => {
+          const sp = l.indexOf(' ');
+          if (sp < 0) return null;
+          const x = parseFloat(l.substring(0, sp));
+          const y = parseFloat(l.substring(sp + 1));
+          if (!isFinite(x) || !isFinite(y)) return null;
+          return {x,y};
+        };
+
+        const circleFrom3 = (a,b,c) => {
+          const d = 2*(a.x*(b.y-c.y)+b.x*(c.y-a.y)+c.x*(a.y-b.y));
+          if (Math.abs(d) < 1e-9) return null;
+          const a2 = a.x*a.x + a.y*a.y;
+          const b2 = b.x*b.x + b.y*b.y;
+          const c2 = c.x*c.x + c.y*c.y;
+          const ux = (a2*(b.y-c.y)+b2*(c.y-a.y)+c2*(a.y-b.y))/d;
+          const uy = (a2*(c.x-b.x)+b2*(a.x-c.x)+c2*(b.x-a.x))/d;
+          const r = Math.hypot(a.x-ux, a.y-uy);
+          if (!(r > 0)) return null;
+          return {cx:ux, cy:uy, r};
+        };
+
+        const tol = Math.max(0.05, Math.min(0.35, Math.max(cfg.minSegmentLenMM*0.20, cfg.junctionDeviation*0.50)));
+        const emitPoint = (p) => { out.push(p.x.toFixed(1) + " " + p.y.toFixed(1)); lastPt = p; };
+
+        let idx = 0;
+        while (idx < lines.length && (lines[idx].startsWith('d') || lines[idx].startsWith('h'))) {
+          out.push(lines[idx]);
+          idx++;
+        }
+
+        while (idx < lines.length) {
+          const l = lines[idx];
+          if (l === 'p0' || l === 'p1') { out.push(l); idx++; continue; }
+
+          const p = toPt(l);
+          if (!p) { out.push(l); idx++; continue; }
+
+          const run = [];
+          let j = idx;
+          while (j < lines.length) {
+            const lj = lines[j];
+            if (lj === 'p0' || lj === 'p1') break;
+            const pj = toPt(lj);
+            if (!pj) break;
+            run.push(pj);
+            j++;
+          }
+
+          let k = 0;
+          while (k < run.length) {
+            const start = lastPt;
+            if (!start) { emitPoint(run[k]); k++; continue; }
+
+            let bestM = -1;
+            let bestC = null;
+            const maxLook = Math.min(run.length-1, k + 80);
+            for (let m = maxLook; m >= k+4; m--) {
+              const mid = run[Math.floor((k + m)/2)];
+              const end = run[m];
+              const c = circleFrom3(start, mid, end);
+              if (!c) continue;
+              if (Math.abs(Math.hypot(end.x-c.cx, end.y-c.cy) - c.r) > tol) continue;
+              let maxErr = 0;
+              for (let q = k; q <= m; q++) {
+                const rq = Math.hypot(run[q].x-c.cx, run[q].y-c.cy);
+                maxErr = Math.max(maxErr, Math.abs(rq - c.r));
+                if (maxErr > tol) break;
+              }
+              if (maxErr <= tol) { bestM = m; bestC = c; break; }
+            }
+
+            if (bestM >= 0 && bestC) {
+              const end = run[bestM];
+              const mid = run[Math.floor((k + bestM)/2)];
+              const cross = (mid.x-start.x)*(end.y-start.y) - (mid.y-start.y)*(end.x-start.x);
+              const cw = (cross < 0);
+              const I = (bestC.cx - start.x);
+              const J = (bestC.cy - start.y);
+              out.push((cw ? 'g2' : 'g3') + ` X${end.x.toFixed(1)} Y${end.y.toFixed(1)} I${I.toFixed(3)} J${J.toFixed(3)}`);
+              lastPt = end;
+              k = bestM + 1;
+            } else {
+              emitPoint(run[k]);
+              k++;
+            }
+          }
+
+          idx = j;
+        }
+
+        return out.join("\n") + "\n";
+      } catch (e) {
+        console.warn('arc fitting failed:', e);
+        return cmdText;
+      }
+    }
+
+    const finalCommands = tryArcFitting(uploadConvertedCommands);
+    const commandsBlob = new Blob([finalCommands], { type: "text/plain" });
 
     $(".muralSlide").hide();
     $("#uploadProgress").show();
@@ -4111,9 +4225,12 @@ function initPulseWidthSettingsUI() {
       minCornerFactor: parseFloat(lerp(fast.minCornerFactor, qual.minCornerFactor, t).toFixed(2)),
       minSegmentLenMM: parseFloat(lerp(fast.minSegmentLenMM, qual.minSegmentLenMM, t).toFixed(2)),
       collinearDeg: parseFloat(lerp(fast.collinearDeg, qual.collinearDeg, t).toFixed(1)),
+      microSlowLenMM: parseFloat(lerp(4.0, 16.0, t).toFixed(1)),
+      microMinFactor: parseFloat(lerp(0.65, 0.18, t).toFixed(2)),
       backlashXmm: 0.0,
       backlashYmm: 0.0,
       sCurveFactor: parseFloat(lerp(fast.sCurveFactor, qual.sCurveFactor, t).toFixed(2)),
+      penSettleMs: lerpInt(20, 80, t),
     };
   }
 
@@ -4128,6 +4245,9 @@ function initPulseWidthSettingsUI() {
     $("#pl_blx").val(p.backlashXmm);
     $("#pl_bly").val(p.backlashYmm);
     $("#pl_scurve").val(p.sCurveFactor);
+    $("#pl_micro_len").val(p.microSlowLenMM);
+    $("#pl_micro_minf").val(p.microMinFactor);
+    $("#pl_pensettle").val(p.penSettleMs);
   }
 
   async function plannerLoadFromDevice(){
@@ -4145,9 +4265,12 @@ function initPulseWidthSettingsUI() {
         minCornerFactor: p.minCornerFactor,
         minSegmentLenMM: p.minSegmentLenMM,
         collinearDeg: p.collinearDeg,
+        microSlowLenMM: p.microSlowLenMM || 0,
+        microMinFactor: (typeof p.microMinFactor === 'number') ? p.microMinFactor : 0.35,
         backlashXmm: p.backlashXmm,
         backlashYmm: p.backlashYmm,
-        sCurveFactor: p.sCurveFactor
+        sCurveFactor: p.sCurveFactor,
+        penSettleMs: p.penSettleMs || 0
       });
       $("#plannerStatusText").text("OK");
     }catch(e){
@@ -4164,9 +4287,12 @@ function initPulseWidthSettingsUI() {
       minCornerFactor: parseFloat($("#pl_mincf").val()),
       minSegmentLenMM: parseFloat($("#pl_minlen").val()),
       collinearDeg: parseFloat($("#pl_coldeg").val()),
+      microSlowLenMM: parseFloat($("#pl_micro_len").val()),
+      microMinFactor: parseFloat($("#pl_micro_minf").val()),
       backlashXmm: parseFloat($("#pl_blx").val()),
       backlashYmm: parseFloat($("#pl_bly").val()),
-      sCurveFactor: parseFloat($("#pl_scurve").val())
+      sCurveFactor: parseFloat($("#pl_scurve").val()),
+      penSettleMs: parseInt($("#pl_pensettle").val(), 10)
     };
 
     $("#plannerStatusText").text("Speichere...");
@@ -4189,6 +4315,79 @@ function initPulseWidthSettingsUI() {
   $("#plannerLoadBtn").click(function(){ plannerLoadFromDevice(); });
   $("#plannerSaveBtn").click(function(){ plannerSaveToDevice(); });
 
+  function plannerApplyPreset(name){
+    const presets = {
+      draft: {
+        junctionDeviation: 0.25,
+        lookaheadSegments: 24,
+        minSegmentTimeMs: 0,
+        cornerSlowdown: 0.15,
+        minCornerFactor: 0.70,
+        minSegmentLenMM: 0.50,
+        collinearDeg: 10.0,
+        microSlowLenMM: 4.0,
+        microMinFactor: 0.60,
+        backlashXmm: 0.0,
+        backlashYmm: 0.0,
+        sCurveFactor: 0.20,
+        penSettleMs: 20
+      },
+      normal: {
+        junctionDeviation: 0.08,
+        lookaheadSegments: 96,
+        minSegmentTimeMs: 8,
+        cornerSlowdown: 0.45,
+        minCornerFactor: 0.35,
+        minSegmentLenMM: 0.20,
+        collinearDeg: 6.0,
+        microSlowLenMM: 8.0,
+        microMinFactor: 0.40,
+        backlashXmm: 0.0,
+        backlashYmm: 0.0,
+        sCurveFactor: 0.55,
+        penSettleMs: 40
+      },
+      high: {
+        junctionDeviation: 0.03,
+        lookaheadSegments: 192,
+        minSegmentTimeMs: 20,
+        cornerSlowdown: 0.65,
+        minCornerFactor: 0.20,
+        minSegmentLenMM: 0.10,
+        collinearDeg: 3.0,
+        microSlowLenMM: 12.0,
+        microMinFactor: 0.25,
+        backlashXmm: 0.0,
+        backlashYmm: 0.0,
+        sCurveFactor: 0.85,
+        penSettleMs: 60
+      },
+      ultra: {
+        junctionDeviation: 0.01,
+        lookaheadSegments: 384,
+        minSegmentTimeMs: 40,
+        cornerSlowdown: 0.75,
+        minCornerFactor: 0.15,
+        minSegmentLenMM: 0.08,
+        collinearDeg: 2.0,
+        microSlowLenMM: 16.0,
+        microMinFactor: 0.18,
+        backlashXmm: 0.0,
+        backlashYmm: 0.0,
+        sCurveFactor: 1.20,
+        penSettleMs: 80
+      }
+    };
+    const p = presets[name];
+    if (!p) return;
+    plannerSetInputs(p);
+  }
+
+  $("#plannerPresetDraft").click(function(){ plannerApplyPreset('draft'); });
+  $("#plannerPresetNormal").click(function(){ plannerApplyPreset('normal'); });
+  $("#plannerPresetHigh").click(function(){ plannerApplyPreset('high'); });
+  $("#plannerPresetUltra").click(function(){ plannerApplyPreset('ultra'); });
+
   // load planner when tools modal opens
   toolsModal.addEventListener('shown.bs.modal', function () {
     if ($("#toolsSecPlanner").length) {
@@ -4197,3 +4396,151 @@ function initPulseWidthSettingsUI() {
       $("#plannerMasterValue").text(v);
     }
   });
+
+  // ===== UI stability: remove leftover Bootstrap backdrops (they can block clicks invisibly) =====
+  document.addEventListener('hidden.bs.modal', function(){
+    try {
+      document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+      document.body.classList.remove('modal-open');
+      document.body.style.removeProperty('padding-right');
+    } catch {}
+  }, true);
+
+  // ===== SVG overlay (mm frame + ORG + axes) for preview IMG elements =====
+  const overlayState = new Map();
+
+  function ensureOverlay(img){
+    if (!img) return null;
+    if (overlayState.has(img)) return overlayState.get(img);
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    svg.style.position = 'absolute';
+    svg.style.left = '0px';
+    svg.style.top = '0px';
+    svg.style.width = '0px';
+    svg.style.height = '0px';
+    svg.style.pointerEvents = 'none';
+    svg.style.zIndex = 999;
+    document.body.appendChild(svg);
+
+    const st = {svg, meta: null};
+    overlayState.set(img, st);
+    return st;
+  }
+
+  function setOverlayMeta(img, meta){
+    const st = ensureOverlay(img);
+    if (!st) return;
+    st.meta = meta;
+    renderOverlay(img);
+  }
+
+  function renderOverlay(img){
+    const st = overlayState.get(img);
+    if (!st || !st.meta || !img || img.style.display === 'none') {
+      if (st && st.svg) st.svg.style.width = '0px';
+      return;
+    }
+
+    const r = img.getBoundingClientRect();
+    if (!(r.width > 5 && r.height > 5)) return;
+
+    const svg = st.svg;
+    svg.style.left = (window.scrollX + r.left) + 'px';
+    svg.style.top = (window.scrollY + r.top) + 'px';
+    svg.style.width = r.width + 'px';
+    svg.style.height = r.height + 'px';
+    svg.setAttribute('viewBox', `0 0 ${r.width} ${r.height}`);
+
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    const mk = (name) => document.createElementNS('http://www.w3.org/2000/svg', name);
+    const rect = mk('rect');
+    rect.setAttribute('x', '1');
+    rect.setAttribute('y', '1');
+    rect.setAttribute('width', (r.width-2).toString());
+    rect.setAttribute('height', (r.height-2).toString());
+    rect.setAttribute('fill', 'none');
+    rect.setAttribute('stroke', '#2f81ff');
+    rect.setAttribute('stroke-width', '2');
+    svg.appendChild(rect);
+
+    let ox = 0, oy = 0;
+    if (st.meta.hasViewBox && st.meta.vbW > 0 && st.meta.vbH > 0) {
+      ox = (-st.meta.vbX / st.meta.vbW) * r.width;
+      oy = (-st.meta.vbY / st.meta.vbH) * r.height;
+    }
+    ox = Math.max(0, Math.min(r.width, ox));
+    oy = Math.max(0, Math.min(r.height, oy));
+
+    const l1 = mk('line');
+    l1.setAttribute('x1', (ox-10).toString());
+    l1.setAttribute('y1', oy.toString());
+    l1.setAttribute('x2', (ox+10).toString());
+    l1.setAttribute('y2', oy.toString());
+    l1.setAttribute('stroke', '#2f81ff');
+    l1.setAttribute('stroke-width', '2');
+    svg.appendChild(l1);
+
+    const l2 = mk('line');
+    l2.setAttribute('x1', ox.toString());
+    l2.setAttribute('y1', (oy-10).toString());
+    l2.setAttribute('x2', ox.toString());
+    l2.setAttribute('y2', (oy+10).toString());
+    l2.setAttribute('stroke', '#2f81ff');
+    l2.setAttribute('stroke-width', '2');
+    svg.appendChild(l2);
+
+    const xAxis = mk('line');
+    xAxis.setAttribute('x1', ox.toString());
+    xAxis.setAttribute('y1', oy.toString());
+    xAxis.setAttribute('x2', (ox+40).toString());
+    xAxis.setAttribute('y2', oy.toString());
+    xAxis.setAttribute('stroke', '#2f81ff');
+    xAxis.setAttribute('stroke-width', '2');
+    svg.appendChild(xAxis);
+
+    const yAxis = mk('line');
+    yAxis.setAttribute('x1', ox.toString());
+    yAxis.setAttribute('y1', oy.toString());
+    yAxis.setAttribute('x2', ox.toString());
+    yAxis.setAttribute('y2', (oy+40).toString());
+    yAxis.setAttribute('stroke', '#2f81ff');
+    yAxis.setAttribute('stroke-width', '2');
+    svg.appendChild(yAxis);
+
+    const text = mk('text');
+    text.setAttribute('x', '8');
+    text.setAttribute('y', '20');
+    text.setAttribute('fill', '#2f81ff');
+    text.setAttribute('font-size', '14');
+    text.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, Arial');
+    const maxX = (st.meta.widthMm || 0).toFixed(1);
+    const maxY = (st.meta.heightMm || 0).toFixed(1);
+    text.textContent = `maxX ${maxX}mm  maxY ${maxY}mm   ORG (0,0)  X+  Y+`;
+    svg.appendChild(text);
+  }
+
+  function hookOverlay(img, getMeta){
+    if (!img) return;
+    img.addEventListener('load', function(){
+      try { setOverlayMeta(img, getMeta()); } catch {}
+    });
+  }
+
+  hookOverlay(document.getElementById('sourceSvg'), () => window.__svgMeta_source);
+  hookOverlay(document.getElementById('previewSvg'), () => window.__svgMeta_source);
+
+  window.addEventListener('resize', () => {
+    try {
+      renderOverlay(document.getElementById('sourceSvg'));
+      renderOverlay(document.getElementById('previewSvg'));
+    } catch {}
+  });
+  window.addEventListener('scroll', () => {
+    try {
+      renderOverlay(document.getElementById('sourceSvg'));
+      renderOverlay(document.getElementById('previewSvg'));
+    } catch {}
+  }, true);

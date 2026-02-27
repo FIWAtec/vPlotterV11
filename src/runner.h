@@ -16,8 +16,9 @@ private:
         enum Type { Pen, Move } type;
         bool penDown; // only for Pen
         Movement::Point p; // only for Move
-        QueuedCommand(bool down) : type(Pen), penDown(down), p(0,0) {}
-        QueuedCommand(Movement::Point pt) : type(Move), penDown(false), p(pt) {}
+        bool protect; // do not collinear-merge away (used for arc-expanded points)
+        QueuedCommand(bool down) : type(Pen), penDown(down), p(0,0), protect(false) {}
+        QueuedCommand(Movement::Point pt, bool protect=false) : type(Move), penDown(false), p(pt), protect(protect) {}
     };
 
     Movement *movement;
@@ -62,15 +63,18 @@ private:
     volatile bool abortRequested = false;
 
     std::deque<QueuedCommand> lookaheadQ;
-    std::deque<Movement::Point> pendingMovePoints; // expanded arc points that did not fit in lookahead window
-
     bool eofReached = false;
 
     // Track current pen state so we can select moveSpeedSteps vs printSpeedSteps.
     bool penIsDown = false;
 
+    int penSettleMs = 0;
+
 public:
     Runner(Movement *movement, Pen *pen, Display *display);
+
+    void setPenSettleMs(int ms);
+    int  getPenSettleMs() const;
 
     void setStartLine(size_t lineAfterHeader);
     size_t getStartLine() const;

@@ -7,8 +7,9 @@ class PenTask : public Task {
     const char* NAME = "PenTask";
     Pen *pen;
     bool up;
+    int settleMs;
     public:
-    PenTask(bool up, Pen *pen);
+    PenTask(bool up, Pen *pen, int settleMs);
     bool isDone();
     void startRunning();
     const char* name() {

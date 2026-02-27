@@ -9,6 +9,90 @@
   const fmState = window.fmState || { vol: "lfs", path: "/", clip: null };
   window.fmState = fmState;
 
+  // Simple overlay for SVG previews (blue frame + mm + ORG)
+  let fmOverlaySvg = null;
+  let fmOverlayMeta = null;
+
+  function fmEnsureOverlay() {
+    if (fmOverlaySvg) return fmOverlaySvg;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    svg.style.position = 'absolute';
+    svg.style.left = '0px';
+    svg.style.top = '0px';
+    svg.style.width = '0px';
+    svg.style.height = '0px';
+    svg.style.pointerEvents = 'none';
+    svg.style.zIndex = 999;
+    document.body.appendChild(svg);
+    fmOverlaySvg = svg;
+    return svg;
+  }
+
+  function fmRenderOverlay(img) {
+    if (!fmOverlayMeta || !img || img.style.display === 'none') {
+      if (fmOverlaySvg) fmOverlaySvg.style.width = '0px';
+      return;
+    }
+    const r = img.getBoundingClientRect();
+    if (!(r.width > 5 && r.height > 5)) return;
+
+    const svg = fmEnsureOverlay();
+    svg.style.left = (window.scrollX + r.left) + 'px';
+    svg.style.top = (window.scrollY + r.top) + 'px';
+    svg.style.width = r.width + 'px';
+    svg.style.height = r.height + 'px';
+    svg.setAttribute('viewBox', `0 0 ${r.width} ${r.height}`);
+
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    const mk = (name) => document.createElementNS('http://www.w3.org/2000/svg', name);
+    const rect = mk('rect');
+    rect.setAttribute('x', '1');
+    rect.setAttribute('y', '1');
+    rect.setAttribute('width', (r.width-2).toString());
+    rect.setAttribute('height', (r.height-2).toString());
+    rect.setAttribute('fill', 'none');
+    rect.setAttribute('stroke', '#2f81ff');
+    rect.setAttribute('stroke-width', '2');
+    svg.appendChild(rect);
+
+    let ox = 0, oy = 0;
+    if (fmOverlayMeta.hasViewBox && fmOverlayMeta.vbW > 0 && fmOverlayMeta.vbH > 0) {
+      ox = (-fmOverlayMeta.vbX / fmOverlayMeta.vbW) * r.width;
+      oy = (-fmOverlayMeta.vbY / fmOverlayMeta.vbH) * r.height;
+    }
+    ox = Math.max(0, Math.min(r.width, ox));
+    oy = Math.max(0, Math.min(r.height, oy));
+
+    const l1 = mk('line');
+    l1.setAttribute('x1', (ox-10).toString());
+    l1.setAttribute('y1', oy.toString());
+    l1.setAttribute('x2', (ox+10).toString());
+    l1.setAttribute('y2', oy.toString());
+    l1.setAttribute('stroke', '#2f81ff');
+    l1.setAttribute('stroke-width', '2');
+    svg.appendChild(l1);
+
+    const l2 = mk('line');
+    l2.setAttribute('x1', ox.toString());
+    l2.setAttribute('y1', (oy-10).toString());
+    l2.setAttribute('x2', ox.toString());
+    l2.setAttribute('y2', (oy+10).toString());
+    l2.setAttribute('stroke', '#2f81ff');
+    l2.setAttribute('stroke-width', '2');
+    svg.appendChild(l2);
+
+    const text = mk('text');
+    text.setAttribute('x', '8');
+    text.setAttribute('y', '20');
+    text.setAttribute('fill', '#2f81ff');
+    text.setAttribute('font-size', '14');
+    text.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, Arial');
+    text.textContent = `maxX ${(fmOverlayMeta.widthMm||0).toFixed(1)}mm  maxY ${(fmOverlayMeta.heightMm||0).toFixed(1)}mm   ORG (0,0)  X+  Y+`;
+    svg.appendChild(text);
+  }
+
   let folderPickCb = null;
 
   function normPath(p) {
@@ -300,6 +384,24 @@
               img.style.display = "";
               const t = (fmState.vol === "lfs") ? "littlefs" : fmState.vol;
               img.src = `/fs/download?vol=${encodeURIComponent(fmState.vol)}&target=${encodeURIComponent(t)}&path=${encodeURIComponent(filePath)}`;
+
+              // SVG overlay meta (header-chunk parsing in firmware)
+              if (lower.endsWith(".svg")) {
+                try {
+                  const src = (fmState.vol === "lfs") ? "fs" : "sd";
+                  const r = await fetch(`/svgMeta?src=${encodeURIComponent(src)}&path=${encodeURIComponent(filePath)}`, { cache: "no-store" });
+                  const j = await r.json();
+                  fmOverlayMeta = (j && j.ok) ? j : null;
+                } catch {
+                  fmOverlayMeta = null;
+                }
+
+                img.addEventListener('load', () => fmRenderOverlay(img), { once: true });
+                setTimeout(() => fmRenderOverlay(img), 50);
+              } else {
+                fmOverlayMeta = null;
+                if (fmOverlaySvg) fmOverlaySvg.style.width = '0px';
+              }
             }
             if (txt) txt.style.display = "none";
           } else {
@@ -472,5 +574,12 @@
       return { name: baseName(p), path: p, dir: !!e.dir, size: Number(e.size || 0) };
     });
   };
+
+  window.addEventListener('resize', () => {
+    try { fmRenderOverlay(document.getElementById('fmImgPrev')); } catch {}
+  });
+  window.addEventListener('scroll', () => {
+    try { fmRenderOverlay(document.getElementById('fmImgPrev')); } catch {}
+  }, true);
 
 })();

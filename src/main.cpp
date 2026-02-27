@@ -29,6 +29,7 @@
 #include "display.h"
 #include "phases/phasemanager.h"
 #include "service/weblog.h"
+#include "svgmeta.h"
 
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
@@ -77,6 +78,10 @@ constexpr const char* PREF_KEY_COLLINEAR  = "colinr";
 constexpr const char* PREF_KEY_BACKLASHX  = "backlx";
 constexpr const char* PREF_KEY_BACKLASHY  = "backly";
 constexpr const char* PREF_KEY_SCURVE     = "scurve";
+
+constexpr const char* PREF_KEY_MICRO_LEN  = "microlen";
+constexpr const char* PREF_KEY_MICRO_MINF = "microminf";
+constexpr const char* PREF_KEY_PEN_SETTLE = "pensettle";
 
 // Perf stats
 struct PerfStats {
@@ -1020,10 +1025,14 @@ void setup()
   cfg.minCornerFactor     = prefs.getDouble(PREF_KEY_MINCORNER, cfg.minCornerFactor);
   cfg.minSegmentLenMM     = prefs.getDouble(PREF_KEY_MINSEGLEN, cfg.minSegmentLenMM);
   cfg.collinearDeg        = prefs.getDouble(PREF_KEY_COLLINEAR, cfg.collinearDeg);
+  cfg.microSlowLenMM      = prefs.getDouble(PREF_KEY_MICRO_LEN, cfg.microSlowLenMM);
+  cfg.microMinFactor      = prefs.getDouble(PREF_KEY_MICRO_MINF, cfg.microMinFactor);
   cfg.backlashXmm         = prefs.getDouble(PREF_KEY_BACKLASHX, cfg.backlashXmm);
   cfg.backlashYmm         = prefs.getDouble(PREF_KEY_BACKLASHY, cfg.backlashYmm);
   cfg.sCurveFactor        = prefs.getDouble(PREF_KEY_SCURVE, cfg.sCurveFactor);
   movement->setPlannerConfig(cfg);
+
+  const int storedPenSettle = prefs.getInt(PREF_KEY_PEN_SETTLE, 0);
 
   WebLog::log(LOG_INFO, "Loaded planner: jd=" + String(cfg.junctionDeviationMM, 4) +
     " lookahead=" + String(cfg.lookaheadSegments) +
@@ -1047,6 +1056,7 @@ void setup()
   }
 
   runner = new Runner(movement, pen, display);
+  if (runner) runner->setPenSettleMs(storedPenSettle);
   phaseManager = new PhaseManager(movement, pen, runner, &server);
 
   server.on("/command", HTTP_POST, [](AsyncWebServerRequest *request) {
@@ -1109,9 +1119,13 @@ void setup()
     plannerObj["minCornerFactor"]   = pcfg.minCornerFactor;
     plannerObj["minSegmentLenMM"]   = pcfg.minSegmentLenMM;
     plannerObj["collinearDeg"]      = pcfg.collinearDeg;
+    plannerObj["microSlowLenMM"]    = pcfg.microSlowLenMM;
+    plannerObj["microMinFactor"]    = pcfg.microMinFactor;
     plannerObj["backlashXmm"]       = pcfg.backlashXmm;
     plannerObj["backlashYmm"]       = pcfg.backlashYmm;
     plannerObj["sCurveFactor"]      = pcfg.sCurveFactor;
+
+    plannerObj["penSettleMs"]       = runner ? runner->getPenSettleMs() : 0;
 
     String out;
     serializeJson(doc, out);
@@ -1218,11 +1232,19 @@ void setup()
     if (request->hasParam("minCornerFactor", true)) cfg.minCornerFactor = request->getParam("minCornerFactor", true)->value().toDouble();
     if (request->hasParam("minSegmentLenMM", true)) cfg.minSegmentLenMM = request->getParam("minSegmentLenMM", true)->value().toDouble();
     if (request->hasParam("collinearDeg", true)) cfg.collinearDeg = request->getParam("collinearDeg", true)->value().toDouble();
+    if (request->hasParam("microSlowLenMM", true)) cfg.microSlowLenMM = request->getParam("microSlowLenMM", true)->value().toDouble();
+    if (request->hasParam("microMinFactor", true)) cfg.microMinFactor = request->getParam("microMinFactor", true)->value().toDouble();
     if (request->hasParam("backlashXmm", true)) cfg.backlashXmm = request->getParam("backlashXmm", true)->value().toDouble();
     if (request->hasParam("backlashYmm", true)) cfg.backlashYmm = request->getParam("backlashYmm", true)->value().toDouble();
     if (request->hasParam("sCurveFactor", true)) cfg.sCurveFactor = request->getParam("sCurveFactor", true)->value().toDouble();
 
+    int penSettleMs = runner ? runner->getPenSettleMs() : 0;
+    if (request->hasParam("penSettleMs", true)) penSettleMs = request->getParam("penSettleMs", true)->value().toInt();
+    if (penSettleMs < 0) penSettleMs = 0;
+    if (penSettleMs > 500) penSettleMs = 500;
+
     movement->setPlannerConfig(cfg);
+    if (runner) runner->setPenSettleMs(penSettleMs);
 
     prefs.putDouble(PREF_KEY_JUNC_DEV, cfg.junctionDeviationMM);
     prefs.putInt(PREF_KEY_LOOKAHEAD, cfg.lookaheadSegments);
@@ -1231,9 +1253,13 @@ void setup()
     prefs.putDouble(PREF_KEY_MINCORNER, cfg.minCornerFactor);
     prefs.putDouble(PREF_KEY_MINSEGLEN, cfg.minSegmentLenMM);
     prefs.putDouble(PREF_KEY_COLLINEAR, cfg.collinearDeg);
+    prefs.putDouble(PREF_KEY_MICRO_LEN, cfg.microSlowLenMM);
+    prefs.putDouble(PREF_KEY_MICRO_MINF, cfg.microMinFactor);
     prefs.putDouble(PREF_KEY_BACKLASHX, cfg.backlashXmm);
     prefs.putDouble(PREF_KEY_BACKLASHY, cfg.backlashYmm);
     prefs.putDouble(PREF_KEY_SCURVE, cfg.sCurveFactor);
+
+    prefs.putInt(PREF_KEY_PEN_SETTLE, penSettleMs);
 
     request->send(200, "text/plain", "OK");
   });
@@ -1291,6 +1317,98 @@ void setup()
     json += "}";
 
     req->send(200, "application/json; charset=utf-8", json);
+  });
+
+  server.on("/diag/www", HTTP_GET, [](AsyncWebServerRequest *req) {
+    if (!gLittleFsMounted) {
+      req->send(503, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"LittleFS not mounted\"}");
+      return;
+    }
+
+    String out = "{\"ok\":true,\"files\":[";
+    bool first = true;
+
+    File root = LittleFS.open("/www");
+    if (!root) {
+      req->send(500, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"open /www failed\"}");
+      return;
+    }
+
+    File f = root.openNextFile();
+    while (f) {
+      const String name = String(f.name());
+      const size_t size = (size_t)f.size();
+      const bool isGz = name.endsWith(".gz");
+
+      if (!first) out += ",";
+      first = false;
+      out += "{\"name\":\"" + name + "\",\"size\":" + String(size) + ",\"gz\":" + String(isGz ? "true" : "false") + "}";
+      f = root.openNextFile();
+    }
+    out += "]}";
+    req->send(200, "application/json; charset=utf-8", out);
+  });
+
+  // /svgMeta?src=sd|fs&path=/path/to/file.svg
+  server.on("/svgMeta", HTTP_GET, [](AsyncWebServerRequest *req) {
+    if (!req->hasParam("path")) {
+      req->send(400, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"missing path\"}");
+      return;
+    }
+    const String path = req->getParam("path")->value();
+    const String src  = req->hasParam("src") ? req->getParam("src")->value() : String("sd");
+
+    String chunk;
+    chunk.reserve(8192);
+
+    if (src == "fs") {
+      if (!gLittleFsMounted) {
+        req->send(503, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"LittleFS not mounted\"}");
+        return;
+      }
+      File f = LittleFS.open(path, "r");
+      if (!f) {
+        req->send(404, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"file not found\"}");
+        return;
+      }
+      const size_t n = std::min((size_t)8192, (size_t)f.size());
+      for (size_t i = 0; i < n && f.available(); i++) chunk += (char)f.read();
+      f.close();
+    } else {
+      const bool sd_ok = ensureSdMounted(false);
+      SdGuard sdg(sd_ok);
+      if (!(sd_ok && sdg.locked)) {
+        req->send(503, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"SD not mounted\"}");
+        return;
+      }
+      File f = SD.open(path, FILE_READ);
+      if (!f) {
+        req->send(404, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"file not found\"}");
+        return;
+      }
+      const size_t n = std::min((size_t)8192, (size_t)f.size());
+      for (size_t i = 0; i < n && f.available(); i++) chunk += (char)f.read();
+      f.close();
+    }
+
+    SvgMeta m = parseSvgHeaderChunk(chunk);
+    if (!m.ok) {
+      req->send(200, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"" + m.error + "\"}");
+      return;
+    }
+
+    String out = "{";
+    out += "\"ok\":true,";
+    out += "\"widthMm\":" + String(m.widthMm, 3) + ",";
+    out += "\"heightMm\":" + String(m.heightMm, 3) + ",";
+    out += "\"unit\":\"" + m.unit + "\",";
+    out += "\"hasViewBox\":" + String(m.hasViewBox ? "true" : "false") + ",";
+    out += "\"vbX\":" + String(m.vbX, 4) + ",";
+    out += "\"vbY\":" + String(m.vbY, 4) + ",";
+    out += "\"vbW\":" + String(m.vbW, 4) + ",";
+    out += "\"vbH\":" + String(m.vbH, 4);
+    out += "}";
+    req->send(200, "application/json; charset=utf-8", out);
   });
 
   server.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *req) {
@@ -1379,6 +1497,7 @@ void setup()
   if (gLittleFsMounted) {
     AsyncStaticWebHandler &h = server.serveStatic("/", LittleFS, "/www/");
     h.setDefaultFile("index.html");
+    h.setCacheControl("no-store, no-cache, must-revalidate, max-age=0");
   } else {
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *req){
       req->send(200, "text/plain", "HTTP server running, but LittleFS UI files are not mounted");

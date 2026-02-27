@@ -89,6 +89,58 @@ export function setSvgString(svgString, currentState) {
 
     originalSvg = new DOMParser().parseFromString(svgString, 'image/svg+xml');
     currentWidth = currentState.safeWidth;
+
+    // Expose parsed SVG meta for overlays (mm + viewBox).
+    try {
+        const svgEl = originalSvg.documentElement;
+
+        const unitToMm = (v, u) => {
+            const unit = (u || 'px').toLowerCase();
+            if (unit === 'mm') return v;
+            if (unit === 'cm') return v * 10.0;
+            if (unit === 'in') return v * 25.4;
+            if (unit === 'pt') return v * (25.4/72.0);
+            if (unit === 'pc') return v * (25.4/6.0);
+            return v * (25.4/96.0);
+        };
+
+        const parseNumUnit = (s) => {
+            const m = String(s || '').trim().match(/^([+-]?[0-9]*\.?[0-9]+)\s*([a-z%]*)/i);
+            if (!m) return null;
+            return {num: parseFloat(m[1]), unit: (m[2] || 'px')};
+        };
+
+        let vbX=0,vbY=0,vbW=0,vbH=0,hasVB=false;
+        if (svgEl.hasAttribute('viewBox')) {
+            const vb = svgEl.getAttribute('viewBox').split(/[\s,]+/).filter(Boolean).map(parseFloat);
+            if (vb.length === 4 && vb.every(n => Number.isFinite(n))) {
+                vbX=vb[0]; vbY=vb[1]; vbW=vb[2]; vbH=vb[3];
+                hasVB = (vbW > 0 && vbH > 0);
+            }
+        }
+
+        let widthMm=0,heightMm=0;
+        const w = parseNumUnit(svgEl.getAttribute('width'));
+        const h = parseNumUnit(svgEl.getAttribute('height'));
+        if (w && h) {
+            widthMm = unitToMm(w.num, w.unit);
+            heightMm = unitToMm(h.num, h.unit);
+        } else if (hasVB) {
+            widthMm = unitToMm(vbW, 'px');
+            heightMm = unitToMm(vbH, 'px');
+        }
+
+        window.__svgMeta_source = {
+            ok: true,
+            widthMm,
+            heightMm,
+            hasViewBox: hasVB,
+            vbX, vbY, vbW, vbH
+        };
+    } catch (e) {
+        window.__svgMeta_source = null;
+    }
+
     normalizeSvg();
     applyTransform();
 }

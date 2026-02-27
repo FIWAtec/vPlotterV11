@@ -37,20 +37,26 @@ void Movement::setPlannerConfig(const PlannerConfig& cfg) {
     plannerCfg = cfg;
 
     if (plannerCfg.junctionDeviationMM < 0.001) plannerCfg.junctionDeviationMM = 0.001;
-    if (plannerCfg.junctionDeviationMM > 2.0) plannerCfg.junctionDeviationMM = 2.0;
+    if (plannerCfg.junctionDeviationMM > 5.0) plannerCfg.junctionDeviationMM = 5.0;
     if (plannerCfg.lookaheadSegments < 1) plannerCfg.lookaheadSegments = 1;
-    if (plannerCfg.lookaheadSegments > 128) plannerCfg.lookaheadSegments = 128;
+    if (plannerCfg.lookaheadSegments > 512) plannerCfg.lookaheadSegments = 512;
     if (plannerCfg.minSegmentTimeMs < 0) plannerCfg.minSegmentTimeMs = 0;
-    if (plannerCfg.minSegmentTimeMs > 100) plannerCfg.minSegmentTimeMs = 100;
+    if (plannerCfg.minSegmentTimeMs > 400) plannerCfg.minSegmentTimeMs = 400;
     if (plannerCfg.cornerSlowdown < 0.05) plannerCfg.cornerSlowdown = 0.05;
     if (plannerCfg.cornerSlowdown > 1.0) plannerCfg.cornerSlowdown = 1.0;
     if (plannerCfg.minCornerFactor < 0.05) plannerCfg.minCornerFactor = 0.05;
     if (plannerCfg.minCornerFactor > 1.0) plannerCfg.minCornerFactor = 1.0;
     if (plannerCfg.sCurveFactor < 0.0) plannerCfg.sCurveFactor = 0.0;
-    if (plannerCfg.sCurveFactor > 1.0) plannerCfg.sCurveFactor = 1.0;
+    if (plannerCfg.sCurveFactor > 2.0) plannerCfg.sCurveFactor = 2.0;
     if (plannerCfg.minSegmentLenMM < 0.0) plannerCfg.minSegmentLenMM = 0.0;
+    if (plannerCfg.minSegmentLenMM > 20.0) plannerCfg.minSegmentLenMM = 20.0;
     if (plannerCfg.collinearDeg < 0.1) plannerCfg.collinearDeg = 0.1;
-    if (plannerCfg.collinearDeg > 20.0) plannerCfg.collinearDeg = 20.0;
+    if (plannerCfg.collinearDeg > 45.0) plannerCfg.collinearDeg = 45.0;
+
+    if (plannerCfg.microSlowLenMM < 0.0) plannerCfg.microSlowLenMM = 0.0;
+    if (plannerCfg.microSlowLenMM > 20.0) plannerCfg.microSlowLenMM = 20.0;
+    if (plannerCfg.microMinFactor < 0.05) plannerCfg.microMinFactor = 0.05;
+    if (plannerCfg.microMinFactor > 1.0) plannerCfg.microMinFactor = 1.0;
 }
 
 Movement::PlannerConfig Movement::getPlannerConfig() const {
@@ -331,6 +337,14 @@ float Movement::beginLinearTravel(double x, double y, int speed) {
     // Dynamic feed from geometry/cornering
     double cornerFactor = computeCornerFactor(dx, dy);
     double targetSpeed = speed * cornerFactor;
+
+    // Micro-segment limiter: tiny segments get slower automatically.
+    const double segLen = sqrt(dx * dx + dy * dy);
+    if (plannerCfg.microSlowLenMM > 0.0 && segLen > 1e-9 && segLen < plannerCfg.microSlowLenMM) {
+        const double t = std::max(0.0, std::min(1.0, segLen / plannerCfg.microSlowLenMM));
+        const double f = plannerCfg.microMinFactor + (1.0 - plannerCfg.microMinFactor) * t;
+        targetSpeed *= std::max(0.05, std::min(1.0, f));
+    }
 
     // minimum segment-time clamp
     if (plannerCfg.minSegmentTimeMs > 0) {

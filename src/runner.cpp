@@ -6,6 +6,7 @@
 #include <math.h>
 #include <algorithm>
 #include <deque>
+#include <vector>
 
 #include "service/weblog.h"
 #include <SD.h>
@@ -41,92 +42,6 @@ static double junctionSpeedMmS(double thetaRad, double accelMmS2, double junctio
     return sqrt(v2);
 }
 
-
-static bool parseArcLine(const String& line, bool& cw, double& x, double& y, double& i, double& j) {
-    if (line.length() < 2) return false;
-    const char c0 = tolower(line.charAt(0));
-    const char c1 = tolower(line.charAt(1));
-    if (c0 != 'g' || (c1 != '2' && c1 != '3')) return false;
-
-    // expected: g2 X Y I J  (CW)  or g3 X Y I J (CCW)
-    cw = (c1 == '2');
-
-    // split by spaces
-    double vals[4];
-    int found = 0;
-    int pos = 2;
-    while (pos < line.length() && found < 4) {
-        while (pos < line.length() && line.charAt(pos) == ' ') pos++;
-        if (pos >= line.length()) break;
-        int next = line.indexOf(' ', pos);
-        String token = (next < 0) ? line.substring(pos) : line.substring(pos, next);
-        token.trim();
-        if (token.length() > 0) {
-            vals[found++] = token.toDouble();
-        }
-        if (next < 0) break;
-        pos = next + 1;
-    }
-    if (found != 4) return false;
-    x = vals[0]; y = vals[1]; i = vals[2]; j = vals[3];
-    return true;
-}
-
-static void appendArcSamples(const Movement::Point& start, bool cw, double endX, double endY, double i, double j,
-                            const Movement::PlannerConfig& cfg, std::deque<Movement::Point>& out) {
-    const double cx = start.x + i;
-    const double cy = start.y + j;
-    const double sx = start.x - cx;
-    const double sy = start.y - cy;
-    const double ex = endX - cx;
-    const double ey = endY - cy;
-
-    const double r0 = sqrt(sx*sx + sy*sy);
-    const double r1 = sqrt(ex*ex + ey*ey);
-    const double r = (r0 + r1) * 0.5;
-    if (r < 1e-6) {
-        out.emplace_back(Movement::Point(endX, endY));
-        return;
-    }
-
-    double a0 = atan2(sy, sx);
-    double a1 = atan2(ey, ex);
-
-    // normalize sweep to follow cw/ccw
-    double sweep = a1 - a0;
-    if (cw) {
-        if (sweep > 0) sweep -= 2.0 * PI;
-    } else {
-        if (sweep < 0) sweep += 2.0 * PI;
-    }
-    const double arcLen = fabs(sweep) * r;
-
-    // chord error from junction deviation (bounded)
-    double chordErr = cfg.junctionDeviationMM * 2.0;
-    if (chordErr < 0.05) chordErr = 0.05;
-    if (chordErr > 0.50) chordErr = 0.50;
-
-    // step length from chord error: s ~= sqrt(8*e*R)
-    double step = sqrt(std::max(1e-9, 8.0 * chordErr * r));
-    const double minStep = std::max(0.05, cfg.minSegmentLenMM);
-    const double maxStep = std::max(minStep, 8.0); // keep sane
-    if (step < minStep) step = minStep;
-    if (step > maxStep) step = maxStep;
-
-    int n = (int)ceil(arcLen / step);
-    if (n < 1) n = 1;
-    if (n > 4096) n = 4096;
-
-    for (int k = 1; k <= n; k++) {
-        const double t = (double)k / (double)n;
-        const double ang = a0 + sweep * t;
-        const double px = cx + r * cos(ang);
-        const double py = cy + r * sin(ang);
-        out.emplace_back(Movement::Point(px, py));
-    }
-}
-
-
 static int clampi(int v, int lo, int hi) {
     if (v < lo) return lo;
     if (v > hi) return hi;
@@ -139,6 +54,68 @@ Runner::Runner(Movement *movement, Pen *pen, Display *display) {
     this->display = display;
     stopped = true;
     paused = false;
+}
+
+void Runner::setPenSettleMs(int ms) {
+    if (ms < 0) ms = 0;
+    if (ms > 500) ms = 500;
+    penSettleMs = ms;
+}
+
+int Runner::getPenSettleMs() const {
+    return penSettleMs;
+}
+
+static bool parseG2G3(const String& in, bool& outCw, double& outX, double& outY, double& outI, double& outJ) {
+    String s = in;
+    s.trim();
+    s.toLowerCase();
+    if (!(s.startsWith("g2") || s.startsWith("g3"))) return false;
+    outCw = s.startsWith("g2");
+
+    s.replace('\t', ' ');
+    while (s.indexOf("  ") >= 0) s.replace("  ", " ");
+
+    std::vector<String> toks;
+    int idx = 0;
+    while (idx < (int)s.length()) {
+        int sp = s.indexOf(' ', idx);
+        if (sp < 0) sp = s.length();
+        const String t = s.substring(idx, sp);
+        if (t.length() > 0) toks.push_back(t);
+        idx = sp + 1;
+    }
+    if (toks.size() < 2) return false;
+
+    bool hasLabel = false;
+    for (size_t i = 1; i < toks.size(); i++) {
+        if (toks[i].length() >= 2) {
+            const char k = toks[i].charAt(0);
+            if (k == 'x' || k == 'y' || k == 'i' || k == 'j') { hasLabel = true; break; }
+        }
+    }
+
+    if (hasLabel) {
+        bool hx=false, hy=false, hi=false, hj=false;
+        for (size_t i = 1; i < toks.size(); i++) {
+            const String t = toks[i];
+            if (t.length() < 2) continue;
+            const char k = t.charAt(0);
+            const double v = t.substring(1).toDouble();
+            if (k == 'x') { outX = v; hx=true; }
+            if (k == 'y') { outY = v; hy=true; }
+            if (k == 'i') { outI = v; hi=true; }
+            if (k == 'j') { outJ = v; hj=true; }
+        }
+        return hx && hy && hi && hj;
+    }
+
+    if (toks.size() < 5) return false;
+    outX = toks[1].toDouble();
+    outY = toks[2].toDouble();
+    outI = toks[3].toDouble();
+    outJ = toks[4].toDouble();
+    return true;
 }
 
 void Runner::setStartLine(size_t lineAfterHeader) {
@@ -154,7 +131,6 @@ void Runner::initTaskProvider() {
     prefaceCount = 0;
     sequenceIx = 0;
     lookaheadQ.clear();
-    pendingMovePoints.clear();
     eofReached = false;
     penIsDown = false;
 
@@ -196,36 +172,6 @@ void Runner::initTaskProvider() {
             continue;
         }
 
-        // Optional arc command: g2 X Y I J or g3 X Y I J
-        {
-            bool cw=false; double ex=0, ey=0, ii=0, jj=0;
-            if (parseArcLine(l, cw, ex, ey, ii, jj)) {
-                // approximate arc length for progress skipping
-                const double cx = virtualPos.x + ii;
-                const double cy = virtualPos.y + jj;
-                const double sx = virtualPos.x - cx;
-                const double sy = virtualPos.y - cy;
-                const double tx = ex - cx;
-                const double ty = ey - cy;
-                const double r0 = sqrt(sx*sx + sy*sy);
-                const double r1 = sqrt(tx*tx + ty*ty);
-                const double r = (r0 + r1) * 0.5;
-                if (r > 1e-6) {
-                    double a0 = atan2(sy, sx);
-                    double a1 = atan2(ty, tx);
-                    double sweep = a1 - a0;
-                    if (cw) { if (sweep > 0) sweep -= 2.0 * PI; }
-                    else { if (sweep < 0) sweep += 2.0 * PI; }
-                    skippedDistance += fabs(sweep) * r;
-                } else {
-                    skippedDistance += Movement::distanceBetweenPoints(virtualPos, Movement::Point(ex, ey));
-                }
-                virtualPos = Movement::Point(ex, ey);
-                consumed++;
-                continue;
-            }
-        }
-
         int sep = l.indexOf(' ');
         if (sep < 0) { consumed++; continue; }
 
@@ -245,18 +191,18 @@ void Runner::initTaskProvider() {
     progress = -1;
 
     if (startLine > 0) {
-        prefaceSequence[prefaceCount++] = new PenTask(true, pen);
+        prefaceSequence[prefaceCount++] = new PenTask(true, pen, penSettleMs);
 
         if (!(virtualPos.x == startPosition.x && virtualPos.y == startPosition.y)) {
             prefaceSequence[prefaceCount++] = new InterpolatingMovementTask(movement, virtualPos, moveSpeedSteps);
             startPosition = virtualPos;
         }
 
-        if (penDown) { prefaceSequence[prefaceCount++] = new PenTask(false, pen); penIsDown = true; }
+        if (penDown) { prefaceSequence[prefaceCount++] = new PenTask(false, pen, penSettleMs); penIsDown = true; }
     }
 
     Movement::Point home = movement->getHomeCoordinates();
-    finishingSequence[0] = new PenTask(true, pen);
+    finishingSequence[0] = new PenTask(true, pen, penSettleMs);
     finishingSequence[1] = new InterpolatingMovementTask(movement, home, moveSpeedSteps);
 }
 
@@ -264,14 +210,7 @@ bool Runner::fillLookaheadQueue() {
     if (!openedFile) return false;
     const int maxSegments = movement->getPlannerConfig().lookaheadSegments;
 
-    // First, flush any pending expanded move points (e.g., from arcs)
-    while ((int)lookaheadQ.size() < maxSegments && !pendingMovePoints.empty()) {
-        lookaheadQ.emplace_back(pendingMovePoints.front());
-        pendingMovePoints.pop_front();
-    }
-
-    // Determine current virtual position for parsing arcs.
-    Movement::Point virtualPos = targetPosition;
+    Movement::Point virtualPos = startPosition;
     for (auto it = lookaheadQ.rbegin(); it != lookaheadQ.rend(); ++it) {
         if (it->type == QueuedCommand::Move) { virtualPos = it->p; break; }
     }
@@ -281,33 +220,71 @@ bool Runner::fillLookaheadQueue() {
         line.trim();
         if (line.length() == 0) continue;
 
-        const char c0 = tolower(line.charAt(0));
+        const char c0 = line.charAt(0);
         if (c0 == 'p') {
             const char c1 = (line.length() > 1) ? line.charAt(1) : '0';
             lookaheadQ.emplace_back(c1 == '1');
             continue;
         }
 
-        // Optional arc: g2 X Y I J / g3 X Y I J
-        {
-            bool cw=false; double ex=0, ey=0, ii=0, jj=0;
-            if (parseArcLine(line, cw, ex, ey, ii, jj)) {
-                std::deque<Movement::Point> samples;
-                appendArcSamples(virtualPos, cw, ex, ey, ii, jj, movement->getPlannerConfig(), samples);
+        bool cw = false;
+        double ax = 0.0, ay = 0.0, ai = 0.0, aj = 0.0;
+        if (parseG2G3(line, cw, ax, ay, ai, aj)) {
+            const auto cfg = movement->getPlannerConfig();
+            const Movement::Point end(ax, ay);
 
-                // push as many samples as we can; keep the rest for next fill call
-                while ((int)lookaheadQ.size() < maxSegments && !samples.empty()) {
-                    Movement::Point p = samples.front();
-                    samples.pop_front();
-                    lookaheadQ.emplace_back(p);
-                    virtualPos = p;
-                }
-                while (!samples.empty()) {
-                    pendingMovePoints.push_back(samples.front());
-                    samples.pop_front();
-                }
+            const double cx = virtualPos.x + ai;
+            const double cy = virtualPos.y + aj;
+            const double rs = hypot(virtualPos.x - cx, virtualPos.y - cy);
+            const double re = hypot(end.x - cx, end.y - cy);
+            if (rs < 1e-6 || fabs(rs - re) > 0.25) {
+                lookaheadQ.emplace_back(end);
+                virtualPos = end;
                 continue;
             }
+
+            double a0 = atan2(virtualPos.y - cy, virtualPos.x - cx);
+            double a1 = atan2(end.y - cy, end.x - cx);
+
+            double da = a1 - a0;
+            if (cw) {
+                if (da >= 0) da -= 2.0 * PI;
+            } else {
+                if (da <= 0) da += 2.0 * PI;
+            }
+
+            const double sweep = da;
+            const double sweepAbs = fabs(sweep);
+            if (sweepAbs < 1e-6) {
+                lookaheadQ.emplace_back(end);
+                virtualPos = end;
+                continue;
+            }
+
+            const double chordErr = std::max(0.02, std::min(0.50, std::max(cfg.minSegmentLenMM * 0.15, cfg.junctionDeviationMM * 0.50)));
+            double maxStepByErr = 2.0 * acos(std::max(-1.0, std::min(1.0, 1.0 - (chordErr / rs))));
+            if (!(maxStepByErr > 1e-6)) maxStepByErr = (2.0 * PI) / 360.0;
+
+            double step = maxStepByErr;
+            if (cfg.minSegmentLenMM > 1e-6) {
+                const double minStepByLen = cfg.minSegmentLenMM / rs;
+                if (minStepByLen > step) step = minStepByLen;
+            }
+
+            int n = (int)ceil(sweepAbs / step);
+            if (n < 1) n = 1;
+            if (n > 4096) n = 4096;
+
+            for (int k = 1; k <= n; k++) {
+                const double t = (double)k / (double)n;
+                const double a = a0 + sweep * t;
+                const double x = cx + cos(a) * rs;
+                const double y = cy + sin(a) * rs;
+                lookaheadQ.emplace_back(Movement::Point(x, y), true);
+            }
+
+            virtualPos = end;
+            continue;
         }
 
         int sep = line.indexOf(' ');
@@ -332,7 +309,7 @@ void Runner::optimizeLookaheadQueue() {
     for (auto it = lookaheadQ.begin(); it != lookaheadQ.end();) {
         if (it->type == QueuedCommand::Move) {
             const double d = Movement::distanceBetweenPoints(prev, it->p);
-            if (d < cfg.minSegmentLenMM) {
+            if (!it->protect && d < cfg.minSegmentLenMM) {
                 it = lookaheadQ.erase(it);
                 continue;
             }
@@ -353,6 +330,8 @@ void Runner::optimizeLookaheadQueue() {
             }
             if (i > 0 && lookaheadQ[i-1].type == QueuedCommand::Move) anchor = lookaheadQ[i-1].p;
             if (lookaheadQ[i+1].type != QueuedCommand::Move || lookaheadQ[i+2].type != QueuedCommand::Move) continue;
+
+            if (lookaheadQ[i].protect || lookaheadQ[i+1].protect || lookaheadQ[i+2].protect) continue;
 
             const auto &a = anchor;
             const auto &b = lookaheadQ[i+1].p;
@@ -400,7 +379,7 @@ Task *Runner::getNextTask() {
     if (cmd.type == QueuedCommand::Pen) {
         currentTaskCountsDistance = false;
         penIsDown = cmd.penDown;
-        return cmd.penDown ? (Task*)new PenTask(false, pen) : (Task*)new PenTask(true, pen);
+        return cmd.penDown ? (Task*)new PenTask(false, pen, penSettleMs) : (Task*)new PenTask(true, pen, penSettleMs);
     }
 
     targetPosition = cmd.p;
@@ -489,7 +468,6 @@ void Runner::run() {
         prefaceCount = 0;
         sequenceIx = 0;
         lookaheadQ.clear();
-    pendingMovePoints.clear();
         eofReached = false;
 
         currentTask = getNextTask();
@@ -570,11 +548,10 @@ void Runner::abortAndGoHome() {
     prefaceCount = 0;
     sequenceIx = 0;
     lookaheadQ.clear();
-    pendingMovePoints.clear();
     eofReached = false;
 
     Movement::Point home = movement->getHomeCoordinates();
-    finishingSequence[0] = new PenTask(true, pen);
+    finishingSequence[0] = new PenTask(true, pen, penSettleMs);
     finishingSequence[1] = new InterpolatingMovementTask(movement, home, moveSpeedSteps);
 
     sequenceIx = 0;
