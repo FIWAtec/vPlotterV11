@@ -12,6 +12,8 @@
     batch: { active: false, index: 0, total: 0, currentName: "" },
     job: { totalDistanceMm: null, startDistMm: 0 },
     timing: { startedAt: null, lastRunTs: null, accumSec: 0 },
+    geom: { bbox: null, heightMm: null },
+    warn: { message: "" },
     last: { progress: null, running: false }
   };
 
@@ -101,6 +103,16 @@
             <div class="small text-muted">Gemalt / Rest</div>
             <div class="fw-semibold"><span id="dsDone">—</span> <span class="text-muted">/</span> <span id="dsLeft">—</span></div>
           </div>
+
+          <div style="grid-column: 1 / span 2;">
+            <div class="small text-muted">Ausmaße (aus Commands)</div>
+            <div class="fw-semibold" id="dsDims">—</div>
+          </div>
+
+          <div style="grid-column: 1 / span 2; display:none;" id="dsWarnWrap">
+            <div class="small text-muted">Hinweis</div>
+            <div class="fw-semibold" id="dsWarn">—</div>
+          </div>
         </div>
       `;
 
@@ -117,7 +129,10 @@
       speed: card.querySelector("#dsSpeed"),
       total: card.querySelector("#dsTotal"),
       done: card.querySelector("#dsDone"),
-      left: card.querySelector("#dsLeft")
+      left: card.querySelector("#dsLeft"),
+      dims: card.querySelector("#dsDims"),
+      warnWrap: card.querySelector("#dsWarnWrap"),
+      warn: card.querySelector("#dsWarn")
     };
     return els;
   }
@@ -172,6 +187,33 @@
         ui.eta.textContent = "—";
       }
     }
+
+    // Ausmaße aus Commands (bbox)
+    try {
+      const b = state.geom.bbox;
+      if (b && Number.isFinite(b.maxX) && Number.isFinite(b.maxY)) {
+        const maxX = Number(b.maxX) || 0;
+        const maxY = Number(b.maxY) || 0;
+        const minX = Number.isFinite(b.minX) ? Number(b.minX) : 0;
+        const minY = Number.isFinite(b.minY) ? Number(b.minY) : 0;
+        const wMm = Math.max(0, maxX - minX);
+        const hMm = Math.max(0, maxY - minY);
+        ui.dims.textContent = `maxX ${maxX.toFixed(1)} mm   maxY ${maxY.toFixed(1)} mm   Bild ${wMm.toFixed(1)} × ${hMm.toFixed(1)} mm`;
+      } else {
+        ui.dims.textContent = "—";
+      }
+    } catch {
+      ui.dims.textContent = "—";
+    }
+
+    // Hinweise (nicht blockierend)
+    const wmsg = String(state.warn.message || "").trim();
+    if (wmsg.length > 0) {
+      ui.warnWrap.style.display = "";
+      ui.warn.textContent = wmsg;
+    } else {
+      ui.warnWrap.style.display = "none";
+    }
   }
 
   // ---- Events ----
@@ -198,6 +240,14 @@
     const d = e?.detail || {};
     const total = Number(d.totalDistanceMm);
     if (Number.isFinite(total) && total > 0) state.job.totalDistanceMm = total;
+    if (d.bbox) state.geom.bbox = d.bbox;
+    if (Number.isFinite(Number(d.heightMm))) state.geom.heightMm = Number(d.heightMm);
+    update();
+  });
+
+  window.addEventListener("mural:warn", (e) => {
+    const d = e?.detail || {};
+    state.warn.message = String(d.message || "");
     update();
   });
 

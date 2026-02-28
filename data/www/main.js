@@ -625,7 +625,8 @@ function initPngUi() {
     });
 
     if (!job?.queue || job.queue.length === 0) {
-      alert("PNG-Layer: Keine Daten erzeugt (Farben prüfen)");
+      if (window.addMessage) window.addMessage(2, "PNG-Layer", "Keine Daten erzeugt (Farben prüfen)");
+      $("#transformText").text("PNG-Layer: Keine Daten erzeugt (Farben prüfen)");
       return;
     }
 
@@ -1314,13 +1315,7 @@ function drawCrosshair(overlayCtx, x, y, label = "") {
 }
 
 function drawStartMarker(overlayCtx, x, y) {
-  overlayCtx.save();
-  overlayCtx.strokeStyle = "rgba(0, 255, 255, 0.85)";
-  overlayCtx.lineWidth = 2;
-  overlayCtx.beginPath();
-  overlayCtx.arc(x, y, 7, 0, Math.PI * 2);
-  overlayCtx.stroke();
-  overlayCtx.restore();
+  // Disabled
 }
 
 function drawPausedBanner(overlayCtx) {
@@ -1411,7 +1406,13 @@ async function initJobPreviewFromCommands(commandsText) {
     // Event: JobModel verfügbar (für Live-HUD/Stats)
     try {
       window.dispatchEvent(new CustomEvent("mural:jobModel", {
-        detail: { totalDistanceMm: jobModel.totalDistance, headerTotal: jobModel.headerTotal, lineCount: jobModel.lineCount }
+        detail: {
+          totalDistanceMm: jobModel.totalDistance,
+          headerTotal: jobModel.headerTotal,
+          lineCount: jobModel.lineCount,
+          heightMm: jobModel.height,
+          bbox: jobModel.bbox
+        }
       }));
     } catch {}
     const tParse1 = performance.now();
@@ -1510,6 +1511,35 @@ function updatePreviewOverlay() {
   const posPx = tr.mmToPx(posMm.x, posMm.y);
 
   drawCrosshair(octx, posPx.x, posPx.y, "Preview");
+
+  // Job dimensions (mm) - always visible
+  try {
+    const b = jobModel.bbox || {};
+    const maxX = Number.isFinite(b.maxX) ? b.maxX : 0;
+    const maxY = Number.isFinite(b.maxY) ? b.maxY : 0;
+    const minX = Number.isFinite(b.minX) ? b.minX : 0;
+    const minY = Number.isFinite(b.minY) ? b.minY : 0;
+    const wMm = Math.max(0, maxX - minX);
+    const hMm = Math.max(0, maxY - minY);
+
+    // bbox frame
+    const tl = tr.mmToPx(minX, minY);
+    const br = tr.mmToPx(maxX, maxY);
+    octx.save();
+    octx.strokeStyle = "rgba(255,255,255,0.35)";
+    octx.lineWidth = 1;
+    octx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+
+    // text
+    octx.fillStyle = "rgba(0,0,0,0.35)";
+    octx.fillRect(8, 8, 320, 54);
+    octx.fillStyle = "rgba(255,255,255,0.9)";
+    octx.font = "12px system-ui, -apple-system, Segoe UI, Roboto";
+    octx.fillText(`Max X: ${maxX.toFixed(1)} mm`, 16, 28);
+    octx.fillText(`Max Y: ${maxY.toFixed(1)} mm`, 16, 44);
+    octx.fillText(`Bildgröße: ${wMm.toFixed(1)} × ${hMm.toFixed(1)} mm`, 16, 60);
+    octx.restore();
+  } catch {}
 
   // Start marker
   const startSegIx = findSegmentIndexByDistance(jobModel, selectedStartDist);
@@ -1635,7 +1665,13 @@ async function ensureJobModelLoadedFromDevice(timeoutMs = 6000) {
     // Event: JobModel verfügbar (für Live-HUD/Stats)
     try {
       window.dispatchEvent(new CustomEvent("mural:jobModel", {
-        detail: { totalDistanceMm: jobModel.totalDistance, headerTotal: jobModel.headerTotal, lineCount: jobModel.lineCount }
+        detail: {
+          totalDistanceMm: jobModel.totalDistance,
+          headerTotal: jobModel.headerTotal,
+          lineCount: jobModel.lineCount,
+          heightMm: jobModel.height,
+          bbox: jobModel.bbox
+        }
       }));
     } catch {}
     return jobModel;
@@ -3094,21 +3130,25 @@ function verifyUpload(state) {
     success: function(data) {
       const receivedData = data.split('\n');
       const sentData = uploadConvertedCommands.split('\n');
-      if (receivedData.length !== sentData.length) {
-        alert("Data verification failed");
-        window.location.reload();
-        return;
-      }
-      for (let i = 0; i < receivedData.length; i++) {
-        if (receivedData[i] !== sentData[i]) {
-          alert("Data verification failed");
-          window.location.reload();
-          return;
+      // NOTE: verification used to hard-fail with an annoying popup right before painting.
+      // Keep a soft check for diagnostics, but NEVER block the workflow.
+      let ok = true;
+      if (receivedData.length !== sentData.length) ok = false;
+      if (ok) {
+        for (let i = 0; i < receivedData.length; i++) {
+          if (receivedData[i] !== sentData[i]) { ok = false; break; }
         }
       }
-      setTimeout(function() {
-        adaptToState(state);
-      }, 1000);
+      if (!ok) {
+        console.warn("Commands verification mismatch (ignored). Proceeding anyway.");
+        try {
+          window.dispatchEvent(new CustomEvent("mural:warn", {
+            detail: { message: "Commands Verifikation abweichend (ignoriert)." }
+          }));
+        } catch {}
+      }
+
+      setTimeout(function() { adaptToState(state); }, 250);
     },
     error: function(err) {
       alert('Failed to download commands from Mural! ' + err);
