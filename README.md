@@ -163,8 +163,7 @@ This project exists to fix that with:
 
 ## License / Notes
 
-Add your license, build instructions, and hardware wiring notes here.
-erwähne hard  tmc2209 nema17 und mks dlc 32  2.1 
+Add your license, build instructions, and hardware wiring notes here. TMC2209 Nema 17,  MKS DLC32 V2.1 
 # Motion / Planner & Feature Overview
 
 This repository contains the **firmware + web UI** for a wall/plotter-style machine (ESP32-based) with a strong focus on **smooth, accurate motion** and a **guided browser workflow** (setup → preview → run).
