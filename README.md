@@ -1,186 +1,351 @@
-# Motion/Planner & Funktionsübersicht
+# Motion / Planner & Feature Overview
 
-Dieses Dokument beschreibt die **Bewegungs-Optimierungen (Motion/Planner)** sowie die **Gesamt-Funktionen** der Software (Firmware + Web-UI).
+This repository contains the **firmware + web UI** for a wall/plotter-style machine (ESP32-based) with a strong focus on **smooth, accurate motion** and a **guided browser workflow** (setup → preview → run).
 
----
-
-## A) Bewegungs-Optimierungen (Motion/Planner)
-
-### 1) Lookahead-Planner im Runner (vorausschauende Geschwindigkeitsplanung)
-
-- **Lookahead-Queue (Vorschau-Puffer)**
-  - Einstellbare Tiefe: `lookaheadSegments` (Standard: **48**)
-  - Zweck: Mehrere Segmente werden vorab betrachtet, um Geschwindigkeit und Übergänge sinnvoll zu planen.
-
-- **Junction-Deviation / Eckgeschwindigkeit (GRBL-ähnlich)**
-  - Berechnet eine **maximal zulässige Eckgeschwindigkeit** aus:
-    - Segmentwinkel
-    - Beschleunigung
-    - `junctionDeviationMM`
-  - Ergebnis: Stabilere Ecken, weniger Schwingen, weniger “Abreißen” in engen Radien.
-
-- **Winkelbasierte Eck-Abbremsung**
-  - Parameter:
-    - `cornerSlowdown`
-    - `minCornerFactor`
-  - Begrenzen, wie stark an Ecken reduziert wird (kontrolliertes Abbremsen ohne “totzubremsen”).
-
-- **G2/G3 Bögen (Arc) → Segmentierung**
-  - Kreisbögen werden in lineare Segmente zerlegt, so dass der **Chord-Error (Sehnenfehler)** klein bleibt.
-  - Einige erzeugte Punkte können als `protect` markiert werden, damit sie nicht durch spätere Optimierung entfernt/verschmolzen werden.
-
-- **Segment-Cleanup**
-  - Entfernt sehr kurze Segmente als Rauschen/Noise:
-    - Schwellwert: `minSegmentLenMM`
-
-- **Collinear-Merging (Kollinearität)**
-  - Verschmilzt Move-Move-Move Sequenzen, wenn der Winkel innerhalb `collinearDeg` liegt.
-  - Effekt:
-    - Weniger Mikro-Segmente
-    - Ruhigerer Lauf
-    - Weniger Overhead im Stepper-Backend
+In short:  
+You upload **SVG/PNG**, the web UI prepares/visualizes the job, the firmware converts it into motion tasks, and the motion system drives the steppers with **lookahead planning** plus **on-the-fly smoothing** so corners, small circles, and tight details don’t look like a shaky mess.
 
 ---
 
-### 2) “On-the-fly” Optimierungen in `Movement::beginLinearTravel()`
+## What this is
 
-- **Backlash-Kompensation (Spiel) in XY**
-  - Wenn die Bewegungsrichtung in X/Y kippt, wird kompensiert:
-    - `backlashXmm`
-    - `backlashYmm`
-  - Ziel: Genauere Wiederholbarkeit trotz mechanischem Spiel.
+A complete plotting stack consisting of:
 
-- **Corner-Factor (dynamische Eck-Reduktion)**
-  - Nutzt den letzten Segmentvektor:
-    - `lastSegmentDX`
-    - `lastSegmentDY`
-  - Reduziert Geschwindigkeit an “echten” Ecken abhängig vom Richtungswechsel.
+- **Firmware (ESP32 / PlatformIO / Arduino)**  
+  Controls motors, motion planning, pen/servo, file handling (LittleFS + SD), job execution, logs, and system endpoints.
 
-- **Micro-Segment Speed Limiter (Mini-Segmente nicht “zu schnell”)**
-  - Wenn Segmentlänge < `microSlowLenMM`, wird die Geschwindigkeit Richtung `microMinFactor` gedrückt.
-  - Ziel: Kleine Kreise/feine Details laufen kontrolliert und nicht “schießend” ab.
+- **Web UI (served by the ESP32)**  
+  Provides a “slides” style workflow for calibration and job execution, plus preview/simulation tools and PNG/SVG processing options.
 
-- **Min-Segment-Zeit Clamp**
-  - `minSegmentTimeMs` verhindert, dass winzige Moves mit unrealistisch hoher Geschwindigkeit ausgeführt werden.
-  - Effekt: Gleichmäßiger, weniger Ruck, weniger Resonanzen.
-
-- **Pseudo S-Curve (lokal reduzierte Acceleration)**
-  - Reduziert lokal die Beschleunigung um Ecken:
-    - `sCurveFactor`
-  - Ziel: Weniger Ruck, weniger mechanisches Schwingen.
-
-- **FastAccelStepper Backend**
-  - Bewegung läuft über `FastStepperBackend` (kein AccelStepper in `Movement`).
-  - `run()` nutzt die eingestellte Beschleunigungsrampe des Backends.
+The main goal is **better drawing quality**:
+- fewer vibrations and corner overshoot  
+- controlled speed in micro-movements  
+- reduced segment noise and overhead  
+- predictable acceleration behavior  
 
 ---
 
-## B) Gesamt-Funktionsliste der Software (Firmware + Web-UI)
+## Motion system highlights
 
-### 1) Setup / Workflow (UI “Slides”)
+The motion pipeline is optimized in **two layers**:
 
-- **Referenzieren / Riemen einziehen**
-  - Linker/Rechter Motor manuell ansteuern (Toggle).
+### 1) Runner Lookahead Planner (predictive planning)
+The Runner buffers and analyzes upcoming segments to compute stable transition speeds.
 
-- **Top-Distance setzen**
-  - Abstand der Aufhängungen definieren.
+Key features:
+- **Lookahead queue** (`lookaheadSegments`, default 48)  
+  Plans multiple segments ahead for smoother speed transitions.
+- **GRBL-like junction deviation** (`junctionDeviationMM`)  
+  Calculates safe corner speed based on angle and acceleration.
+- **Angle-based corner slowdown** (`cornerSlowdown`, `minCornerFactor`)  
+  Prevents “hard brake to zero” while still protecting corners.
+- **Arc segmentation (G2/G3)**  
+  Converts arcs to small line segments with bounded chord error.  
+  Optional **protect points** prevent important detail from being merged away later.
+- **Segment cleanup** (`minSegmentLenMM`)  
+  Drops tiny noise segments.
+- **Collinear merging** (`collinearDeg`)  
+  Merges near-straight sequences to reduce micro-segments and stepper overhead.
 
-- **Zur Grundstellung fahren**
-  - “Extend to Home”.
+### 2) Movement::beginLinearTravel() (on-the-fly smoothing)
+Applies local corrections right before executing a segment.
 
-- **Stift/Servo kalibrieren**
-  - Slider + `+/-` Buttons.
-
-- **Bild laden**
-  - SVG und PNG (`accept=".svg,.png"`)
-
-- **Renderer wählen**
-  - „Pfad-Nachverfolgung“
-  - „Vektor → Raster → Vektor“
-
-- **Zeichenvorschau + Simulation**
-  - Preview-Bild
-  - Progressbar
-  - Distanzanzeige
-  - Canvas-Simulation (Play/Pause etc.)
-
----
-
-### 2) PNG-Funktionen (Upload-Bereich)
-
-- **PNG-Modi**
-  - Schwarz/Weiß (alt)
-  - Farblayer (neu)
-  - Raster-Direkt (ohne Vektor)
-
-- **Farbtoleranz-Regler**
-  - Zuordnung ähnlicher Farben.
-
-- **Flecken entfernen**
-  - Min-Pixel-Schwellwert.
-
-- **Raster-Auflösung**
-  - Step-Pixel (`step px`) im Raster-Modus.
-
-- **Farblayer-Workflow**
-  - Erkannten Farblayer anzeigen
-  - Button: „Farblayer nacheinander malen“
+Key features:
+- **Backlash compensation** (`backlashXmm`, `backlashYmm`)  
+  Compensates mechanical play when direction flips.
+- **Dynamic corner factor** (`lastSegmentDX`, `lastSegmentDY`)  
+  Reduces speed depending on how strong the direction change is.
+- **Micro-segment speed limiter** (`microSlowLenMM`, `microMinFactor`)  
+  Prevents tiny segments from being executed “too fast”.
+- **Minimum segment time clamp** (`minSegmentTimeMs`)  
+  Avoids unrealistic high-speed bursts on very short moves.
+- **Pseudo S-curve** (`sCurveFactor`)  
+  Locally reduces acceleration near corners to reduce jerk and resonance.
+- **FastAccelStepper backend**  
+  Movement runs through a fast stepper backend with proper ramp handling.
 
 ---
 
-### 3) SVG-Serien / Batch
+## Web UI workflow (slides)
 
-- Button: **„SVG-SERIE (SD-Ordner)“**
-  - Ordner auswählen
-  - Jobs seriell abarbeiten (Frontend-Seite)
+The UI guides you through typical setup steps:
 
----
-
-### 4) Laufsteuerung (Firmware API)
-
-- `/run` – Job starten  
-- `/resume` – Weiterlaufen nach Pause  
-- `/status` – Status/Progress  
-- `/command` – Kommandos senden  
-- `/setSpeeds` – Print/Move Speed setzen  
-- `/extendToHome` – Homing/Grundstellung  
-- `/setServo` – Servo direkt setzen  
-- `/setPenDistance` – Stift-Parameter setzen  
-- `/setTopDistance` – Top-Distance setzen  
-- `/getState` – aktuellen Zustand abrufen  
-
----
-
-### 5) Diagnose, Logs, System
-
-- `/logs` – Ringbuffer/Weblog  
-- `/sysinfo` – Systeminfos  
-- `/diag` – Diagnose-Endpoint  
-- `/reboot` – Reboot  
+1. **Reference / retract belts**  
+   Manual left/right motor control.
+2. **Set top distance**  
+   Define anchor spacing.
+3. **Extend to home**  
+   Move the machine to the base position.
+4. **Pen / servo calibration**  
+   Slider + +/- controls.
+5. **Load image**  
+   Upload `.svg` or `.png`.
+6. **Choose renderer**  
+   - Path tracing  
+   - Vector → Raster → Vector
+7. **Preview + simulation**  
+   Preview image, progress bar, distance display, canvas simulation with play/pause.
 
 ---
 
-### 6) Dateisystem / Datei-Manager (SD + LittleFS)
+## PNG features
 
-- `/fs/info`  
-- `/sd/remount`  
-- `/fs/list`  
-- `/fs/read`  
-- `/fs/download`  
-- `/fs/delete`  
-- `/fs/mkdir`  
-- `/fs/rename`  
-- `/fs/copy`  
-- `/fs/move`  
+PNG processing supports multiple modes:
 
-**Commands-Datei Handling**
-- `/uploadCommands` – Commands hochladen  
-- `/downloadCommands` – Commands herunterladen  
+- **Black/White** (legacy)
+- **Color layers** (new)  
+  Detects color layers and supports painting them sequentially.
+- **Direct raster** (no vector conversion)  
+  Raster-driven plotting mode.
+
+Tools:
+- **Color tolerance** to group similar colors  
+- **Speckle removal** (minimum pixel threshold)  
+- **Raster resolution** (`step px`) control  
+- **Paint layers sequentially** button
 
 ---
 
-### 7) Treiber / Step-Signal Themen
+## SVG batch / series mode
 
+- Select a folder on SD and run multiple SVG jobs sequentially via the frontend.
+
+---
+
+## Firmware API (run control)
+
+Core endpoints:
+- `/run` – start job  
+- `/resume` – continue after pause  
+- `/status` – status/progress  
+- `/command` – send commands  
+- `/setSpeeds` – print/move speed  
+- `/extendToHome` – homing/base position  
+- `/setServo` – direct servo control  
+- `/setPenDistance` – pen parameters  
+- `/setTopDistance` – set top distance  
+- `/getState` – current state
+
+Diagnostics/system:
+- `/logs` – ringbuffer/weblog  
+- `/sysinfo` – system info  
+- `/diag` – diagnostics endpoint  
+- `/reboot` – reboot
+
+Filesystem (LittleFS + SD):
+- `/fs/info`, `/sd/remount`, `/fs/list`, `/fs/read`, `/fs/download`  
+- `/fs/delete`, `/fs/mkdir`, `/fs/rename`, `/fs/copy`, `/fs/move`  
+- `/uploadCommands`, `/downloadCommands`
+
+Driver / step signal:
 - `/pulseWidths` (GET)  
 - `/setPulseWidths` (POST)  
-- `/gpio/driverEnable` (GET/POST)  
+- `/gpio/driverEnable` (GET/POST)
+
+---
+
+## Why it exists
+
+Plotters fail in the same boring ways:
+- corners overshoot and ring  
+- tiny circles become polygons at insane speed  
+- segment noise creates jitter  
+- stepper backend gets flooded with micro-moves  
+
+This project exists to fix that with:
+- lookahead planning  
+- junction-aware corner control  
+- segment cleanup + merging  
+- micro-move speed limiting  
+- more stable acceleration handling  
+
+---
+
+## License / Notes
+
+Add your license, build instructions, and hardware wiring notes here.
+erwähne hard  tmc2209 nema17 und mks dlc 32  2.1 
+# Motion / Planner & Feature Overview
+
+This repository contains the **firmware + web UI** for a wall/plotter-style machine (ESP32-based) with a strong focus on **smooth, accurate motion** and a **guided browser workflow** (setup → preview → run).
+
+In short:  
+You upload **SVG/PNG**, the web UI prepares/visualizes the job, the firmware converts it into motion tasks, and the motion system drives the steppers with **lookahead planning** plus **on-the-fly smoothing** so corners, small circles, and tight details don’t turn into mechanical chaos.
+
+---
+
+## What this is
+
+A complete plotting stack consisting of:
+
+- **Firmware (ESP32 / PlatformIO / Arduino)**  
+  Controls motors, motion planning, pen/servo, file handling (LittleFS + SD), job execution, logs, and system endpoints.
+
+- **Web UI (served by the ESP32)**  
+  Provides a “slides” style workflow for calibration and job execution, plus preview/simulation tools and PNG/SVG processing options.
+
+The main goal is **better drawing quality**:
+- fewer vibrations and corner overshoot  
+- controlled speed in micro-movements  
+- reduced segment noise and overhead  
+- predictable acceleration behavior  
+
+---
+
+## Hardware target (typical build)
+
+This project is designed around a common DIY motion stack:
+
+- **Stepper motors:** NEMA17  
+- **Drivers:** TMC2209  
+- **Controller board:** **MKS DLC 32 v2.1** (a.k.a. MKS DLC32 2.1)
+
+Notes:
+- The firmware focuses on generating clean motion behavior; the exact pin mapping / wiring depends on your board setup.
+- TMC2209 is sensitive to timing and resonance at certain speeds, which is why the motion pipeline includes micro-segment limiting, junction planning, and local accel shaping.
+
+---
+
+## Motion system highlights
+
+The motion pipeline is optimized in **two layers**:
+
+### 1) Runner Lookahead Planner (predictive planning)
+The Runner buffers and analyzes upcoming segments to compute stable transition speeds.
+
+Key features:
+- **Lookahead queue** (`lookaheadSegments`, default 48)  
+  Plans multiple segments ahead for smoother speed transitions.
+- **GRBL-like junction deviation** (`junctionDeviationMM`)  
+  Calculates safe corner speed based on angle and acceleration.
+- **Angle-based corner slowdown** (`cornerSlowdown`, `minCornerFactor`)  
+  Prevents “hard brake to zero” while still protecting corners.
+- **Arc segmentation (G2/G3)**  
+  Converts arcs to small line segments with bounded chord error.  
+  Optional **protect points** prevent important detail from being merged away later.
+- **Segment cleanup** (`minSegmentLenMM`)  
+  Drops tiny noise segments.
+- **Collinear merging** (`collinearDeg`)  
+  Merges near-straight sequences to reduce micro-segments and stepper overhead.
+
+### 2) Movement::beginLinearTravel() (on-the-fly smoothing)
+Applies local corrections right before executing a segment.
+
+Key features:
+- **Backlash compensation** (`backlashXmm`, `backlashYmm`)  
+  Compensates mechanical play when direction flips.
+- **Dynamic corner factor** (`lastSegmentDX`, `lastSegmentDY`)  
+  Reduces speed depending on how strong the direction change is.
+- **Micro-segment speed limiter** (`microSlowLenMM`, `microMinFactor`)  
+  Prevents tiny segments from being executed “too fast”.
+- **Minimum segment time clamp** (`minSegmentTimeMs`)  
+  Avoids unrealistic high-speed bursts on very short moves.
+- **Pseudo S-curve** (`sCurveFactor`)  
+  Locally reduces acceleration near corners to reduce jerk and resonance.
+- **FastAccelStepper backend**  
+  Movement runs through a fast stepper backend with proper ramp handling.
+
+---
+
+## Web UI workflow (slides)
+
+The UI guides you through typical setup steps:
+
+1. **Reference / retract belts**  
+   Manual left/right motor control.
+2. **Set top distance**  
+   Define anchor spacing.
+3. **Extend to home**  
+   Move the machine to the base position.
+4. **Pen / servo calibration**  
+   Slider + +/- controls.
+5. **Load image**  
+   Upload `.svg` or `.png`.
+6. **Choose renderer**  
+   - Path tracing  
+   - Vector → Raster → Vector
+7. **Preview + simulation**  
+   Preview image, progress bar, distance display, canvas simulation with play/pause.
+
+---
+
+## PNG features
+
+PNG processing supports multiple modes:
+
+- **Black/White** (legacy)
+- **Color layers** (new)  
+  Detects color layers and supports painting them sequentially.
+- **Direct raster** (no vector conversion)  
+  Raster-driven plotting mode.
+
+Tools:
+- **Color tolerance** to group similar colors  
+- **Speckle removal** (minimum pixel threshold)  
+- **Raster resolution** (`step px`) control  
+- **Paint layers sequentially** button
+
+---
+
+## SVG batch / series mode
+
+- Select a folder on SD and run multiple SVG jobs sequentially via the frontend.
+
+---
+
+## Firmware API (run control)
+
+Core endpoints:
+- `/run` – start job  
+- `/resume` – continue after pause  
+- `/status` – status/progress  
+- `/command` – send commands  
+- `/setSpeeds` – print/move speed  
+- `/extendToHome` – homing/base position  
+- `/setServo` – direct servo control  
+- `/setPenDistance` – pen parameters  
+- `/setTopDistance` – set top distance  
+- `/getState` – current state
+
+Diagnostics/system:
+- `/logs` – ringbuffer/weblog  
+- `/sysinfo` – system info  
+- `/diag` – diagnostics endpoint  
+- `/reboot` – reboot
+
+Filesystem (LittleFS + SD):
+- `/fs/info`, `/sd/remount`, `/fs/list`, `/fs/read`, `/fs/download`  
+- `/fs/delete`, `/fs/mkdir`, `/fs/rename`, `/fs/copy`, `/fs/move`  
+- `/uploadCommands`, `/downloadCommands`
+
+Driver / step signal:
+- `/pulseWidths` (GET)  
+- `/setPulseWidths` (POST)  
+- `/gpio/driverEnable` (GET/POST)
+
+---
+
+## Why it exists
+
+Plotters fail in the same predictable ways:
+- corners overshoot and ring  
+- tiny circles become polygon-ish at insane speed  
+- segment noise creates jitter  
+- the stepper backend gets flooded with micro-moves  
+
+This project exists to fix that with:
+- lookahead planning  
+- junction-aware corner control  
+- segment cleanup + merging  
+- micro-move speed limiting  
+- more stable acceleration handling  
+
+
+clear
+pio run -t clean
+pio run -t upload
+pio run -t uploadfs
+
+-------------------------------------------------
+pio device monitor -b 115200
+pio device monitor -p COM4 -b 115200
