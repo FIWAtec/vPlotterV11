@@ -1436,7 +1436,7 @@ void setup()
     if (!pen) { request->send(500, "text/plain", "pen not ready"); return; }
     if (!request->hasParam("value", true)) { request->send(400, "text/plain", "missing value"); return; }
     int v = request->getParam("value", true)->value().toInt();
-    v = constrain(v, 0, 70);
+    v = constrain(v, 0, 80);
     pen->setPendingDownAngle(v);
     prefs.putInt(PREF_KEY_PEN_DOWN, v);
     request->send(200, "application/json", String("{\"ok\":true,\"pendingDown\":") + v + "}");
@@ -1446,7 +1446,7 @@ void setup()
     if (!pen) { request->send(500, "text/plain", "pen not ready"); return; }
     if (!request->hasParam("value", true)) { request->send(400, "text/plain", "missing value"); return; }
     int v = request->getParam("value", true)->value().toInt();
-    v = constrain(v, 0, 70);
+    v = constrain(v, 0, 80);
     pen->setPendingUpAngle(v);
     prefs.putInt(PREF_KEY_PEN_UP, v);
     request->send(200, "application/json", String("{\"ok\":true,\"pendingUp\":") + v + "}");
