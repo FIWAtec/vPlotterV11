@@ -849,6 +849,34 @@ main.form-signin::-webkit-scrollbar-thumb {
   display: block;
 }
 
+/* --- v14 UI polish: calmer buttons + pause panel --- */
+#pausePanel {
+  border-radius: 18px;
+  background: rgba(15, 18, 32, 0.55);
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 14px 34px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.10);
+}
+
+#pausePanel .btn {
+  border-radius: 14px;
+  padding: 10px 14px;
+  font-weight: 600;
+}
+
+#pausePanel .btn-outline-warning,
+#pausePanel .btn-outline-light {
+  border-color: rgba(255,255,255,0.22);
+}
+
+#pausePanel .btn-outline-warning:hover,
+#pausePanel .btn-outline-light:hover {
+  border-color: rgba(255,255,255,0.38);
+}
+
+#drawQualitySaveBtn {
+  border-radius: 12px;
+}
+
 .job-preview-controls {
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.12);

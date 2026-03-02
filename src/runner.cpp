@@ -2,6 +2,8 @@
 #include "tasks/interpolatingmovementtask.h"
 #include "tasks/pentask.h"
 
+#include <Arduino.h>
+
 #include <stdexcept>
 #include <math.h>
 #include <algorithm>
@@ -187,6 +189,11 @@ void Runner::initTaskProvider() {
     jobTotalDistance = headerTotalDistance - skippedDistance;
     if (jobTotalDistance < 0.0) jobTotalDistance = 0.0;
     jobDistanceSoFar = 0.0;
+    jobDrawDistanceSoFar = 0.0;
+    jobTravelDistanceSoFar = 0.0;
+
+    // reset timing (real start happens in start()/restart)
+    lastTickMs = 0;
 
     progress = -1;
 
@@ -223,7 +230,17 @@ bool Runner::fillLookaheadQueue() {
         const char c0 = line.charAt(0);
         if (c0 == 'p') {
             const char c1 = (line.length() > 1) ? line.charAt(1) : '0';
-            lookaheadQ.emplace_back(c1 == '1');
+            const bool down = (c1 == '1');
+
+            // Skip redundant pen commands to avoid unnecessary servo churn.
+            if (!lookaheadQ.empty()) {
+                const auto& last = lookaheadQ.back();
+                if (last.type == QueuedCommand::Pen && last.penDown == down) {
+                    continue;
+                }
+            }
+
+            lookaheadQ.emplace_back(down);
             continue;
         }
 
@@ -384,6 +401,7 @@ Task *Runner::getNextTask() {
 
     targetPosition = cmd.p;
     currentTaskCountsDistance = true;
+    currentMoveIsDrawing = penIsDown;
 
     // -------- Lookahead-based speed planning (task-level) --------
     int baseSpeedSteps = penIsDown ? printSpeedSteps : moveSpeedSteps;
@@ -450,6 +468,55 @@ Task *Runner::getNextTask() {
 void Runner::run() {
     if (stopped) return;
 
+    tickTiming_();
+
+    // Restart requested from UI scrubbing (pause spool)
+    if (restartRequested) {
+        if (movement && movement->isMoving()) return;
+
+        restartRequested = false;
+        paused = false;
+
+        if (openedFile) openedFile.close();
+        openedFile = File();
+
+        if (currentTask) {
+            delete currentTask;
+            currentTask = nullptr;
+        }
+
+        prefaceIx = 0;
+        prefaceCount = 0;
+        sequenceIx = 0;
+        lookaheadQ.clear();
+        eofReached = false;
+
+        // reset metrics
+        jobDistanceSoFar = 0.0;
+        jobDrawDistanceSoFar = 0.0;
+        jobTravelDistanceSoFar = 0.0;
+        progress = -1;
+
+        // restart timing
+        jobStartMs = millis();
+        lastTickMs = jobStartMs;
+        totalPausedMs = 0;
+        movingActiveMs = 0;
+
+        setStartLine(restartLineAfterHeader);
+        initTaskProvider();
+
+        currentTask = getNextTask();
+        if (currentTask) {
+            currentTask->startRunning();
+            stopped = false;
+        } else {
+            stopped = true;
+        }
+        WebLog::info(String("Runner restarted from line ") + restartLineAfterHeader);
+        return;
+    }
+
     if (abortRequested) {
         if (movement && movement->isMoving()) return;
 
@@ -487,6 +554,8 @@ void Runner::run() {
         if (currentTask->name() == InterpolatingMovementTask::NAME && currentTaskCountsDistance) {
             const double distanceCovered = Movement::distanceBetweenPoints(startPosition, targetPosition);
             jobDistanceSoFar += distanceCovered;
+            if (currentMoveIsDrawing) jobDrawDistanceSoFar += distanceCovered;
+            else jobTravelDistanceSoFar += distanceCovered;
             startPosition = targetPosition;
 
             int newProgress = 0;
@@ -567,6 +636,14 @@ void Runner::abortAndGoHome() {
 void Runner::start() {
     paused = false;
     abortRequested = false;
+
+    // reset timing
+    jobStartMs = millis();
+    lastTickMs = jobStartMs;
+    pauseStartMs = 0;
+    totalPausedMs = 0;
+    movingActiveMs = 0;
+
     initTaskProvider();
 
     if (currentTask) {
@@ -596,3 +673,71 @@ int Runner::getProgress() const {
 
 double Runner::getTotalDistance() const { return jobTotalDistance; }
 double Runner::getDistanceSoFar() const { return jobDistanceSoFar; }
+
+double Runner::getDrawDistanceSoFar() const { return jobDrawDistanceSoFar; }
+double Runner::getTravelDistanceSoFar() const { return jobTravelDistanceSoFar; }
+
+uint32_t Runner::getElapsedMs() const {
+    if (jobStartMs == 0) return 0;
+    const uint32_t now = millis();
+    uint32_t elapsed = (now >= jobStartMs) ? (now - jobStartMs) : 0;
+    uint32_t pausedExtra = totalPausedMs;
+    if (paused && pauseStartMs > 0 && now >= pauseStartMs) pausedExtra += (now - pauseStartMs);
+    if (elapsed >= pausedExtra) elapsed -= pausedExtra;
+    else elapsed = 0;
+    return elapsed;
+}
+
+uint32_t Runner::getMovingActiveMs() const { return movingActiveMs; }
+
+double Runner::getAvgSpeedMmS_MovingOnly() const {
+    const double t = (double)getMovingActiveMs() / 1000.0;
+    if (t <= 1e-6) return 0.0;
+    return getDistanceSoFar() / t;
+}
+
+bool Runner::isParked() const { return parked; }
+
+void Runner::tickTiming_() {
+    const uint32_t now = millis();
+    if (lastTickMs == 0) { lastTickMs = now; return; }
+    const uint32_t dt = (now >= lastTickMs) ? (now - lastTickMs) : 0;
+    lastTickMs = now;
+
+    if (paused) return;
+
+    if (movement && movement->isMoving()) {
+        movingActiveMs += dt;
+    }
+}
+
+bool Runner::requestRestartFromLine(size_t lineAfterHeader) {
+    // Allow while paused; robot will restart only when movement is idle.
+    restartLineAfterHeader = lineAfterHeader;
+    restartRequested = true;
+    return true;
+}
+
+bool Runner::requestParkTo(double xMm, double yMm) {
+    if (!paused) return false;
+    if (!movement || !pen) return false;
+    if (movement->isMoving()) return false;
+
+    // Lift pen and move to requested position (simple park, no auto-return).
+    pen->slowUp();
+    if (penSettleMs > 0) delay((unsigned long)penSettleMs);
+
+    try {
+        movement->beginLinearTravel(xMm, yMm, moveSpeedSteps);
+        parked = true;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool Runner::requestParkToBase(double yMm) {
+    if (!movement) return false;
+    const double x = movement->getWidth() / 2.0;
+    return requestParkTo(x, yMm);
+}

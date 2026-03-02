@@ -255,6 +255,9 @@
 
       <label for="infillDensity" class="form-label mb-0">Füllungsdichte</label>
       <input type="range" class="form-range mb-2 text-center" min="0" max="4" id="infillDensity" value="0">
+      
+      <label for="penLiftOptimize" class="form-label mb-0">Stift-Optimierung (weniger Up/Down) <span id="penLiftOptimizeValue">0</span>%</label>
+      <input type="range" class="form-range mb-2 text-center" min="0" max="100" step="1" id="penLiftOptimize" value="0">
       <label for="turdSize" class="form-label mb-0">Flecken entfernen</label>
       <input type="range" class="form-range mb-2 text-center" min="2" max="200" step="11" id="turdSize" value="2">
       <input class="form-check-input mb-2" type="checkbox" id="flattenPathsCheckbox">
@@ -299,17 +302,50 @@
 
       <div class="d-grid gap-2 mb-3">
         <button class="btn btn-warning" id="pauseBtn" type="button">Pause</button>
+
+        <!-- Inline Pause Controls (no modal popup) -->
+        <div id="pausePanel" class="card p-3" style="display:none;">
+          <div class="d-flex flex-wrap gap-2 align-items-center">
+            <button class="btn btn-success" id="resumeBtnInline" type="button">▶ Play</button>
+            <button class="btn btn-outline-light" id="gotoBaseBtn" type="button">Grundstellung (X/2, Y=340)</button>
+            <button class="btn btn-outline-warning" id="spoolBackBtn" type="button">⏪ Zurück</button>
+            <button class="btn btn-outline-warning" id="spoolFwdBtn" type="button">⏩ Vor</button>
+          </div>
+          <div class="mt-2">
+            <div class="d-flex justify-content-between align-items-center">
+              <label for="spoolSpeed" class="form-label mb-1">Spulgeschwindigkeit</label>
+              <small class="text-muted" id="spoolSpeedText">20×</small>
+            </div>
+            <input type="range" class="form-range" id="spoolSpeed" min="20" max="100" step="5" value="20">
+          </div>
+          <div class="small text-muted mt-2" id="spoolInfo">—</div>
+        </div>
+
         <button class="btn btn-danger" id="stopBtn" type="button">Malen beenden</button>
       </div>
 
       <div class="telemetry card p-3 mb-3">
         <div id="coordsDisplay">X: – Y: –</div>
+
+        <div class="mt-2">
+          <label for="drawQualityPreset" class="form-label mb-1">
+            Qualität: <strong id="drawQualityPresetText">—</strong>
+          </label>
+          <input type="range" class="form-range" min="0" max="4" step="1" id="drawQualityPreset" value="2">
+          <div class="d-flex gap-2 align-items-center mt-1">
+            <button class="btn btn-outline-primary btn-sm" id="drawQualitySaveBtn" type="button" disabled>
+              Qualität speichern
+            </button>
+            <div class="small text-muted">Super schnell ↔ Ultra Qualität</div>
+          </div>
+        </div>
         <div class="progress mt-2" style="height:18px;">
           <div class="progress-bar progress-bar-striped progress-bar-animated" id="drawProgressBar" style="width:0%">
           </div>
         </div>
         <div class="mt-1 text-center">
           <small id="drawProgressText">0 %</small>
+          <div><small class="text-muted" id="drawStatsText">—</small></div>
         </div>
 
         <div class="card p-3 mb-3">

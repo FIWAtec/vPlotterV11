@@ -34,6 +34,9 @@ private:
     Task* currentTask = nullptr;
     bool currentTaskCountsDistance = false;
 
+    // For distance split (pen down vs pen up)
+    bool currentMoveIsDrawing = false;
+
     bool stopped = true;
     bool paused  = false;
 
@@ -53,6 +56,9 @@ private:
     double jobTotalDistance = 0.0; 
     double jobDistanceSoFar = 0.0;
 
+    double jobDrawDistanceSoFar   = 0.0; // pen down movement only
+    double jobTravelDistanceSoFar = 0.0; // pen up movement only
+
     double skippedDistance = 0.0;
 
     Movement::Point startPosition;
@@ -70,6 +76,30 @@ private:
 
     int penSettleMs = 0;
 
+    // ---------- Time / speed metrics ----------
+    uint32_t jobStartMs      = 0;
+    uint32_t lastTickMs      = 0;
+    uint32_t pauseStartMs    = 0;
+    uint32_t totalPausedMs   = 0;
+    uint32_t movingActiveMs  = 0; // time where steppers were actively moving (excludes pen delays)
+
+    void tickTiming_();
+
+    // ---------- Restart from scrubbed line ----------
+    bool restartRequested = false;
+    size_t restartLineAfterHeader = 0;
+
+    // ---------- Pause "Park" (Grundstellung) ----------
+    bool parkRequested = false;
+    bool parked        = false;
+    bool returnRequested = false;
+
+    Movement::Point parkTarget = Movement::Point(0,0);
+    Movement::Point parkReturn = Movement::Point(0,0);
+    int parkStage = 0; // 0=idle, 1=goingToPark, 2=parked, 3=returning
+
+    void handlePark_();
+
 public:
     Runner(Movement *movement, Pen *pen, Display *display);
 
@@ -86,14 +116,32 @@ public:
     void pauseJob();
     void resumeJob();
 
+    // Restart job from a specific commands line (line index after header d/h).
+    // Used for "spooling" in pause UI: robot does not move while spooling, only after play.
+    bool requestRestartFromLine(size_t lineAfterHeader);
+
+    // Pause helper: move to a "base" position while staying paused.
+    // Pressing resume will automatically return to the previous XY first, then continue.
+    bool requestParkTo(double xMm, double yMm);
+    bool requestParkToBase(double yMm);
+
     void abortAndGoHome();
 
     int getProgress() const;
-    double getTotalDistance() const;   
-    double getDistanceSoFar() const;  
+    double getTotalDistance() const;
+    double getDistanceSoFar() const;
+
+    double getDrawDistanceSoFar() const;
+    double getTravelDistanceSoFar() const;
+
+    uint32_t getElapsedMs() const;     // excludes paused time
+    uint32_t getMovingActiveMs() const; // excludes pen delays / dwell (movement only)
+
+    double getAvgSpeedMmS_MovingOnly() const;
 
     bool isStopped() const;
     bool isPaused() const;
+    bool isParked() const;
 };
 
 #endif

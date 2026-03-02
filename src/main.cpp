@@ -1086,6 +1086,17 @@ void setup()
     doc["running"]  = running;
     doc["paused"]   = paused;
 
+    // Job stats (distance/time)
+    if (runner) {
+      doc["dist_total_mm"]   = (double)runner->getTotalDistance();
+      doc["dist_sofar_mm"]   = (double)runner->getDistanceSoFar();
+      doc["dist_draw_mm"]    = (double)runner->getDrawDistanceSoFar();
+      doc["dist_travel_mm"]  = (double)runner->getTravelDistanceSoFar();
+      doc["elapsed_ms"]      = (uint32_t)runner->getElapsedMs();
+      doc["moving_ms"]       = (uint32_t)runner->getMovingActiveMs();
+      doc["avg_speed_mms"]   = (double)runner->getAvgSpeedMmS_MovingOnly();
+    }
+
     doc["phaseName"]   = (phaseManager && phaseManager->getCurrentPhase()) ? phaseManager->getCurrentPhase()->getName() : "—";
     doc["printSteps"]  = (int)printSpeedSteps;
     doc["fwMaxLoopMs"] = (double)gPerf.max_loop_us / 1000.0;
@@ -1139,6 +1150,32 @@ void setup()
 
   server.on("/resumeJob", HTTP_POST, [](AsyncWebServerRequest *request){
     if (runner) runner->resumeJob();
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Move to base/park position while paused (X=center, Y configurable; default 340mm)
+  server.on("/gotoBase", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (!runner || !movement) { request->send(503, "text/plain", "Not ready"); return; }
+    const bool paused = runner->isPaused();
+    if (!paused) { request->send(409, "text/plain", "Pause required"); return; }
+
+    double y = 340.0;
+    if (request->hasParam("y", true)) y = request->getParam("y", true)->value().toDouble();
+
+    const bool ok = runner->requestParkToBase(y);
+    request->send(ok ? 200 : 409, "text/plain", ok ? "OK" : "BUSY");
+  });
+
+  // Restart job from a selected commands line (line index after header d/h). Used by pause scrubbing.
+  server.on("/restartJobFromLine", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (!runner) { request->send(503, "text/plain", "Not ready"); return; }
+    if (!request->hasParam("line", true)) { request->send(400, "text/plain", "Missing line"); return; }
+    const int line = request->getParam("line", true)->value().toInt();
+    if (line < 0) { request->send(400, "text/plain", "Invalid line"); return; }
+
+    // We trigger a safe restart in Runner::run() once movement is idle.
+    runner->pauseJob();
+    runner->requestRestartFromLine((size_t)line);
     request->send(200, "text/plain", "OK");
   });
 

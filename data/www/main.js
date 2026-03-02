@@ -76,7 +76,12 @@ const liveHud = {
   pendingUp: 80,
   hasPendingDown: false,
   hasPendingUp: false,
-  fwMaxLoopMs: 0
+  fwMaxLoopMs: 0,
+  distDrawMm: 0,
+  distTravelMm: 0,
+  avgSpeedMmS: 0,
+  movingMs: 0,
+  elapsedMs: 0
 };
 
 const perfStats = {
@@ -90,7 +95,12 @@ const perfStats = {
   fwMoveMs: 0,
   fwRunnerMs: 0,
   fwPhaseMs: 0,
-  fwMaxLoopMs: 0
+  fwMaxLoopMs: 0,
+  distDrawMm: 0,
+  distTravelMm: 0,
+  avgSpeedMmS: 0,
+  movingMs: 0,
+  elapsedMs: 0
 };
 
 function setPerfStat(key, value) {
@@ -123,8 +133,22 @@ function updatePerfHud() {
     <div class="perfHudRow"><span>Phase</span><b>${escapeHtml(liveHud.phaseName || "—")}</b></div>
     <div class="perfHudRow"><span>Print Steps</span><b>${escapeHtml(liveHud.printSteps ?? "—")}</b></div>
     <div class="perfHudRow"><span>Stift</span><b>${escapeHtml(penTxt)}</b></div>
+    <div class="perfHudRow"><span>Draw</span><b>${(Number(liveHud.distDrawMm||0)/1000).toFixed(2)} m</b></div>
+    <div class="perfHudRow"><span>Move</span><b>${(Number(liveHud.distTravelMm||0)/1000).toFixed(2)} m</b></div>
+    <div class="perfHudRow"><span>Ø Speed (Move)</span><b>${Number(liveHud.avgSpeedMmS||0).toFixed(1)} mm/s</b></div>
     <div class="perfHudRow"><span>FW MaxLoop</span><b>${escapeHtml(maxLoop)}</b></div>
   `;
+
+  // Also show compact stats in the drawing screen (old menu), if present.
+  try {
+    const el = document.getElementById("drawStatsText");
+    if (el) {
+      const drawM = (Number(liveHud.distDrawMm || 0) / 1000).toFixed(2);
+      const moveM = (Number(liveHud.distTravelMm || 0) / 1000).toFixed(2);
+      const spd  = Number(liveHud.avgSpeedMmS || 0).toFixed(1);
+      el.textContent = `Draw ${drawM} m | Move ${moveM} m | Ø ${spd} mm/s`;
+    }
+  } catch {}
 }
 
 function updatePerfSettingsMeasured() {
@@ -686,6 +710,8 @@ function initPngUi() {
         $("#infillDensity").val(batchSettings.infillDensity ?? 0);
         $("#turdSize").val(batchSettings.turdSize ?? 2);
         $("#flattenPathsCheckbox").prop("checked", !!batchSettings.flattenPaths);
+        $("#penLiftOptimize").val(batchSettings.penLiftOptimize ?? 0);
+        $("#penLiftOptimizeValue").text(batchSettings.penLiftOptimize ?? 0);
 
         rendererKey = (batchSettings.rendererKey === "vrv") ? "vrv" : "path";
         rendererFn = (rendererKey === "vrv") ? render_VectorRasterVector : render_PathTracing;
@@ -863,6 +889,14 @@ function updateLiveHudFromStatus(data) {
     liveHud.hasPendingDown = !!data.pen.hasPendingDown;
     liveHud.hasPendingUp = !!data.pen.hasPendingUp;
   }
+
+
+  // Job stats (distance/speed)
+  if (data.dist_draw_mm !== undefined) liveHud.distDrawMm = Number(data.dist_draw_mm) || 0;
+  if (data.dist_travel_mm !== undefined) liveHud.distTravelMm = Number(data.dist_travel_mm) || 0;
+  if (data.avg_speed_mms !== undefined) liveHud.avgSpeedMmS = Number(data.avg_speed_mms) || 0;
+  if (data.moving_ms !== undefined) liveHud.movingMs = Number(data.moving_ms) || 0;
+  if (data.elapsed_ms !== undefined) liveHud.elapsedMs = Number(data.elapsed_ms) || 0;
 
   // bevorzugt top-level fwMaxLoopMs, sonst aus perf.max_loop_ms
   if (data.fwMaxLoopMs !== undefined) liveHud.fwMaxLoopMs = Number(data.fwMaxLoopMs) || 0;
@@ -1731,19 +1765,67 @@ function updateLiveOverlay(xMm, yMm, progress, paused) {
   const tr = computeTransformForCanvas(jobModel, w, h);
   const octx = overlay.getContext("2d");
 
+  // Always redraw overlay fully (so scrubbing backwards can "erase" only what is beyond)
+  octx.clearRect(0, 0, w, h);
+
+  // 1) Workspace / job bbox (mm) always visible
+  try {
+    const b = jobModel.bbox || {};
+    const maxX = Number.isFinite(b.maxX) ? b.maxX : 0;
+    const maxY = Number.isFinite(b.maxY) ? b.maxY : 0;
+    const minX = Number.isFinite(b.minX) ? b.minX : 0;
+    const minY = Number.isFinite(b.minY) ? b.minY : 0;
+    const wMm = Math.max(0, maxX - minX);
+    const hMm = Math.max(0, maxY - minY);
+
+    const tl = tr.mmToPx(minX, minY);
+    const br = tr.mmToPx(maxX, maxY);
+
+    octx.save();
+    octx.strokeStyle = "rgba(255,255,255,0.35)";
+    octx.lineWidth = 1;
+    octx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+
+    octx.fillStyle = "rgba(0,0,0,0.35)";
+    octx.fillRect(8, 8, 340, 54);
+    octx.fillStyle = "rgba(255,255,255,0.9)";
+    octx.font = "12px system-ui, -apple-system, Segoe UI, Roboto";
+    octx.fillText(`Max X: ${maxX.toFixed(1)} mm`, 16, 28);
+    octx.fillText(`Max Y: ${maxY.toFixed(1)} mm`, 16, 44);
+    octx.fillText(`Bildgröße: ${wMm.toFixed(1)} × ${hMm.toFixed(1)} mm`, 16, 60);
+    octx.restore();
+  } catch {}
+
+  // 2) Scrub preview (yellow) while paused
+  try {
+    if (paused && jobModel && Number.isFinite(Number(window.__scrubDist))) {
+      const start = Number(liveStartDist || 0);
+      const target = Math.max(0, Math.min(jobModel.totalDistance || 0, Number(window.__scrubDist)));
+      const delta = Math.max(0, target - start);
+
+      const state = {
+        segIx: findSegmentIndexByDistance(jobModel, start),
+        segProg: 0,
+        dist: start,
+      };
+
+      advanceDraw(octx, jobModel, tr, delta, state);
+    }
+  } catch {}
+
+  // 3) Crosshair at real robot position
   const p = tr.mmToPx(xMm, yMm);
   drawCrosshair(octx, p.x, p.y, `${Math.round(progress)}%`);
 
-  // Start marker
+  // 4) Start marker
   const startSegIx = findSegmentIndexByDistance(jobModel, liveStartDist);
   const startSeg = jobModel.segments[startSegIx];
   const startPx = tr.mmToPx(startSeg.x1, startSeg.y1);
   drawStartMarker(octx, startPx.x, startPx.y);
 
-  if (paused) {
-    drawPausedBanner(octx);
-  }
+  if (paused) drawPausedBanner(octx);
 }
+
 
 function advanceLiveToProgress(progress) {
   if (!jobModel) return;
@@ -1789,12 +1871,81 @@ async function checkIfExtendedToHome(extendToHomeTime) {
   }
 }
 
+
+// -------- Drawing Quality Presets (Saved with explicit button) --------
+const DRAW_QUALITY_PRESETS = [
+  { name: "Super schnell", cfg: { lookaheadSegments: 32, junctionDeviation: 0.05, minSegmentTimeMs: 0, cornerSlowdown: 0.25, minCornerFactor: 0.35, minSegmentLenMM: 2.0, collinearDeg: 25.0, microSlowLenMM: 0.0, microMinFactor: 1.0, sCurveFactor: 0.0 } },
+  { name: "Schnell",       cfg: { lookaheadSegments: 64, junctionDeviation: 0.08, minSegmentTimeMs: 0, cornerSlowdown: 0.35, minCornerFactor: 0.30, minSegmentLenMM: 1.0, collinearDeg: 20.0, microSlowLenMM: 4.0, microMinFactor: 0.55, sCurveFactor: 0.4 } },
+  { name: "Standard",      cfg: { lookaheadSegments: 128, junctionDeviation: 0.12, minSegmentTimeMs: 10, cornerSlowdown: 0.55, minCornerFactor: 0.20, minSegmentLenMM: 0.5, collinearDeg: 12.0, microSlowLenMM: 8.0, microMinFactor: 0.35, sCurveFactor: 0.8 } },
+  { name: "Qualität",      cfg: { lookaheadSegments: 256, junctionDeviation: 0.18, minSegmentTimeMs: 25, cornerSlowdown: 0.75, minCornerFactor: 0.15, minSegmentLenMM: 0.2, collinearDeg: 8.0,  microSlowLenMM: 12.0, microMinFactor: 0.25, sCurveFactor: 1.2 } },
+  { name: "Ultra Qualität",cfg: { lookaheadSegments: 512, junctionDeviation: 0.25, minSegmentTimeMs: 40, cornerSlowdown: 0.90, minCornerFactor: 0.10, minSegmentLenMM: 0.0, collinearDeg: 4.0,  microSlowLenMM: 16.0, microMinFactor: 0.18, sCurveFactor: 1.6 } },
+];
+
+async function applyDrawQualityPreset(ix) {
+  const p = DRAW_QUALITY_PRESETS[Math.max(0, Math.min(DRAW_QUALITY_PRESETS.length - 1, ix))];
+  const txt = document.getElementById("drawQualityPresetText");
+  if (txt) txt.textContent = p.name;
+
+  // Apply (and persisted by firmware endpoint)
+  try {
+    const body = new URLSearchParams();
+    for (const [k, v] of Object.entries(p.cfg)) body.set(k, String(v));
+
+    await fetch("/setPlannerConfig", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body
+    });
+  } catch (e) {
+    console.warn("applyDrawQualityPreset failed", e);
+  }
+}
+
+function initDrawQualityPresetUI() {
+  const s = document.getElementById("drawQualityPreset");
+  const t = document.getElementById("drawQualityPresetText");
+  const btnSave = document.getElementById("drawQualitySaveBtn");
+  if (!s) return;
+
+  let pendingIx = Number.parseInt(s.value || "2", 10);
+
+  const setPending = (ix) => {
+    pendingIx = Math.max(0, Math.min(DRAW_QUALITY_PRESETS.length - 1, ix));
+    if (t) t.textContent = DRAW_QUALITY_PRESETS[pendingIx].name;
+    if (btnSave) btnSave.disabled = false;
+  };
+
+  const onSlider = () => {
+    const ix = Number.parseInt(s.value || "2", 10);
+    setPending(ix);
+  };
+
+  s.addEventListener("input", onSlider);
+  s.addEventListener("change", onSlider);
+
+  if (btnSave) {
+    btnSave.addEventListener("click", async () => {
+      try {
+        btnSave.disabled = true;
+        await applyDrawQualityPreset(pendingIx);
+      } catch (e) {
+        btnSave.disabled = false;
+      }
+    });
+  }
+
+  // default label (no auto-apply)
+  try { setPending(pendingIx); if (btnSave) btnSave.disabled = true; } catch {}
+}
+
+
 function init() {
   initPngUi();
   initPerfSettingsUi();
   ui_initEnablePinToggles().catch(() => {});
   startPerfPoll();
   bindServoToolButtons();
+  try { initDrawQualityPresetUI(); } catch {}
   document.addEventListener("DOMContentLoaded", () => {
     // ... deine init Sachen ...
     initPulseWidthSettingsUI();
@@ -1946,7 +2097,9 @@ function init() {
     return normalizedValue;
   }
 
-  $("#servoRange").on('input', $.throttle(250, function () {
+    $("#penLiftOptimize").on('input', function () { $("#penLiftOptimizeValue").text(getPenLiftOptimize()); });
+
+$("#servoRange").on('input', $.throttle(250, function () {
     const servoValue = getServoValueFromInputValue();
     $.post("/setServo", {angle: servoValue});
   }));
@@ -2133,6 +2286,7 @@ $("#uploadSvg").off("change").on("change", async function () {
       homeY: currentState.homeY,
       infillDensity: getInfillDensity(),
       flattenPaths: getFlattenPaths(),
+      penLiftOptimize: getPenLiftOptimize(),
     };
 
     const workerStartTs = performance.now();
@@ -2647,45 +2801,145 @@ $("#uploadSvg").off("change").on("change", async function () {
 // Pause / Resume / Stop
   $("#pauseBtn").click(async function() {
     try {
-      await fetch("/pauseJob", { method: "POST" });
-      const modalEl = document.getElementById("pauseModal");
-      const modal = new bootstrap.Modal(modalEl);
-      document.getElementById("pauseStateText").textContent = "Pausiert";
-      modal.show();
+      const panel = document.getElementById("pausePanel");
+      if (!panel) return;
+
+      // Toggle panel visibility; first press also pauses firmware.
+      const isVisible = panel.style.display !== "none" && panel.style.display !== "";
+      if (!isVisible) {
+        await fetch("/pauseJob", { method: "POST" });
+        panel.style.display = "";
+      } else {
+        panel.style.display = "none";
+      }
+
+      // Initialize scrub state from current live progress
+      try {
+        await ensureJobModelLoadedFromDevice();
+        if (jobModel) {
+          const pct = Number(document.getElementById("drawProgressText")?.textContent?.replace("%","") || 0);
+          const sel = findStartByPercent(jobModel, pct);
+          window.__scrubDist = sel.startDist;
+          window.__scrubLine = sel.startLine;
+          window.__scrubStartDist = sel.startDist;
+          document.getElementById("spoolInfo").textContent = `Spule ab: ${Math.round(pct)}% (line ${window.__scrubLine})`;
+        }
+      } catch {}
     } catch (e) {
-      alert("Pause fehlgeschlagen: " + (e?.message || e));
+      console.warn(e);
     }
   });
 
-  $("#resumeBtn").click(async function() {
+  // Play: restart from scrubbed line (robot moves only after Play)
+  $("#resumeBtnInline").click(async function() {
     try {
-      await fetch("/resumeJob", { method: "POST" });
-      const modalEl = document.getElementById("pauseModal");
-      const modal = bootstrap.Modal.getInstance(modalEl);
-      if (modal) modal.hide();
+      const line = Number(window.__scrubLine ?? selectedStartLine ?? 0);
+      await fetch("/restartJobFromLine", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ line: String(line) })
+      });
+
+      const panel = document.getElementById("pausePanel");
+      if (panel) panel.style.display = "none";
     } catch (e) {
-      alert("Resume fehlgeschlagen: " + (e?.message || e));
+      alert("Play fehlgeschlagen: " + (e?.message || e));
     }
   });
 
-  async function stopJob() {
-    const ok = confirm("Job wirklich beenden? (Stift hoch + Home)");
-    if (!ok) return;
+  // Grundstellung: X/2, Y=340 (nur im Pause-Zustand)
+  $("#gotoBaseBtn").click(async function() {
     try {
-      await fetch("/stopJob", { method: "POST" });
-      // UI bleibt auf Drawing, aber der Bot fährt sauber heim.
+      await fetch("/gotoBase", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ y: "340" })
+      });
     } catch (e) {
-      alert("Stop fehlgeschlagen: " + (e?.message || e));
+      alert("Grundstellung fehlgeschlagen: " + (e?.message || e));
     }
+  });
+
+  // Spool controls: hold button for continuous scrubbing (UI-only, no robot move)
+  function startSpool(dir) {
+    if (!jobModel) return;
+    window.__spoolActive = true;
+    const slider = document.getElementById("spoolSpeed");
+    const mult = Math.max(20, Math.min(100, Number(slider?.value || 20)));
+    // 20× -> 2000 mm/s, 100× -> 10000 mm/s
+    const rateMmS = mult * 100;
+    let last = performance.now();
+
+    const tick = (ts) => {
+      if (!window.__spoolActive) return;
+      const dt = Math.max(0, (ts - last) / 1000);
+      last = ts;
+
+      const delta = dir * rateMmS * dt;
+      const minDist = 0;
+      const maxDist = jobModel.totalDistance;
+
+      let d = Number(window.__scrubDist ?? 0) + delta;
+      d = Math.max(minDist, Math.min(maxDist, d));
+      window.__scrubDist = d;
+
+      const ix = findSegmentIndexByDistance(jobModel, d);
+      const seg = jobModel.segments[Math.max(0, Math.min(jobModel.segments.length - 1, ix))];
+      window.__scrubLine = seg?.lineIndex ?? 0;
+
+      const pct = (jobModel.totalDistance > 0) ? (100 * d / jobModel.totalDistance) : 0;
+      const info = document.getElementById("spoolInfo");
+      if (info) info.textContent = `Spule: ${pct.toFixed(1)}% (line ${window.__scrubLine})`;
+
+      // trigger overlay redraw on next telemetry tick
+      window.__scrubOverlayDirty = true;
+
+      requestAnimationFrame(tick);
+    };
+
+    requestAnimationFrame(tick);
   }
 
-  $("#stopBtn").click(stopJob);
-  $("#stopBtnModal").click(async function() {
-    const modalEl = document.getElementById("pauseModal");
-    const modal = bootstrap.Modal.getInstance(modalEl);
-    if (modal) modal.hide();
-    await stopJob();
-  });
+  function stopSpool() {
+    window.__spoolActive = false;
+  }
+
+  const backBtn = document.getElementById("spoolBackBtn");
+  const fwdBtn  = document.getElementById("spoolFwdBtn");
+
+  // Spool speed slider (20×..100×)
+  const spoolSlider = document.getElementById("spoolSpeed");
+  const spoolTxt = document.getElementById("spoolSpeedText");
+  const updateSpoolUi = () => {
+    const v = Math.max(20, Math.min(100, Number(spoolSlider?.value || 20)));
+    if (spoolTxt) spoolTxt.textContent = `${v}×`;
+    if (backBtn) backBtn.textContent = `⏪ Zurück (${v}×)`;
+    if (fwdBtn)  fwdBtn.textContent  = `⏩ Vor (${v}×)`;
+  };
+  if (spoolSlider) {
+    spoolSlider.addEventListener("input", updateSpoolUi);
+    spoolSlider.addEventListener("change", updateSpoolUi);
+  }
+  try { updateSpoolUi(); } catch {}
+
+  if (backBtn) {
+    backBtn.addEventListener("mousedown", () => startSpool(-1));
+    backBtn.addEventListener("touchstart", (e) => { e.preventDefault(); startSpool(-1); }, { passive:false });
+    backBtn.addEventListener("mouseup", stopSpool);
+    backBtn.addEventListener("mouseleave", stopSpool);
+    backBtn.addEventListener("touchend", stopSpool);
+  }
+
+  if (fwdBtn) {
+    fwdBtn.addEventListener("mousedown", () => startSpool(1));
+    fwdBtn.addEventListener("touchstart", (e) => { e.preventDefault(); startSpool(1); }, { passive:false });
+    fwdBtn.addEventListener("mouseup", stopSpool);
+    fwdBtn.addEventListener("mouseleave", stopSpool);
+    fwdBtn.addEventListener("touchend", stopSpool);
+  }
+
+  // stop button stays as-is (abort/go home)
+  $("#stopBtnModal").off("click");
 
   svgControl.initSvgControl();
 
@@ -2787,6 +3041,8 @@ $("#uploadSvg").off("change").on("change", async function () {
         $("#infillDensity").val(batchSettings.infillDensity ?? 0);
         $("#turdSize").val(batchSettings.turdSize ?? 2);
         $("#flattenPathsCheckbox").prop("checked", !!batchSettings.flattenPaths);
+        $("#penLiftOptimize").val(batchSettings.penLiftOptimize ?? 0);
+        $("#penLiftOptimizeValue").text(batchSettings.penLiftOptimize ?? 0);
 
         // Renderer wählen (ohne UI-Klick)
         rendererKey = (batchSettings.rendererKey === "vrv") ? "vrv" : "path";
@@ -3208,6 +3464,15 @@ function getInfillDensity() {
   const density = parseInt($("#infillDensity").val());
   if ([0, 1, 2, 3, 4].includes(density)) return density;
   throw new Error('Invalid density');
+}
+
+
+function getPenLiftOptimize() {
+  const v = parseInt($("#penLiftOptimize").val());
+  if (!Number.isFinite(v)) return 0;
+  if (v < 0) return 0;
+  if (v > 100) return 100;
+  return v;
 }
 
 function getTurdSize() {
@@ -4446,7 +4711,7 @@ function initPulseWidthSettingsUI() {
     } catch {}
   }, true);
 
-  // ===== SVG overlay (mm frame + ORG + axes) for preview IMG elements =====
+  // ===== SVG overlay (mm text + ORG + axes) for preview IMG elements =====
   const overlayState = new Map();
 
   function ensureOverlay(img){
@@ -4496,15 +4761,8 @@ function initPulseWidthSettingsUI() {
     while (svg.firstChild) svg.removeChild(svg.firstChild);
 
     const mk = (name) => document.createElementNS('http://www.w3.org/2000/svg', name);
-    const rect = mk('rect');
-    rect.setAttribute('x', '1');
-    rect.setAttribute('y', '1');
-    rect.setAttribute('width', (r.width-2).toString());
-    rect.setAttribute('height', (r.height-2).toString());
-    rect.setAttribute('fill', 'none');
-    rect.setAttribute('stroke', '#2f81ff');
-    rect.setAttribute('stroke-width', '2');
-    svg.appendChild(rect);
+    // NOTE: User requested that blue frame must be removed.
+    // We keep only axes + text, no full-frame rectangle.
 
     let ox = 0, oy = 0;
     if (st.meta.hasViewBox && st.meta.vbW > 0 && st.meta.vbH > 0) {
@@ -4553,7 +4811,7 @@ function initPulseWidthSettingsUI() {
     const text = mk('text');
     text.setAttribute('x', '8');
     text.setAttribute('y', '20');
-    text.setAttribute('fill', '#2f81ff');
+    text.setAttribute('fill', 'rgba(255,255,255,0.90)');
     text.setAttribute('font-size', '14');
     text.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, Arial');
     const maxX = (st.meta.widthMm || 0).toFixed(1);

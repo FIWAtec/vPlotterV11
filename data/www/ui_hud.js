@@ -103,6 +103,10 @@
             <div class="small text-muted">Gemalt / Rest</div>
             <div class="fw-semibold"><span id="dsDone">—</span> <span class="text-muted">/</span> <span id="dsLeft">—</span></div>
           </div>
+          <div>
+            <div class="small text-muted">Stift unten / Stift oben</div>
+            <div class="fw-semibold"><span id="dsDraw">—</span> <span class="text-muted">/</span> <span id="dsTravel">—</span></div>
+          </div>
 
           <div style="grid-column: 1 / span 2;">
             <div class="small text-muted">Ausmaße (aus Commands)</div>
@@ -130,6 +134,8 @@
       total: card.querySelector("#dsTotal"),
       done: card.querySelector("#dsDone"),
       left: card.querySelector("#dsLeft"),
+      draw: card.querySelector("#dsDraw"),
+      travel: card.querySelector("#dsTravel"),
       dims: card.querySelector("#dsDims"),
       warnWrap: card.querySelector("#dsWarnWrap"),
       warn: card.querySelector("#dsWarn")
@@ -173,7 +179,8 @@
         const elapsedSec = Math.max(1, state.timing.accumSec || 0);
         ui.elapsed.textContent = fmtTime(elapsedSec);
 
-        const avg = done / elapsedSec; // mm/s
+        const teleAvg = Number(state.last.avg_speed_mms);
+        const avg = Number.isFinite(teleAvg) && teleAvg > 0 ? teleAvg : (done / elapsedSec); // mm/s
         ui.speed.textContent = fmtSpeed(avg);
 
         if (avg > 0.0001) {

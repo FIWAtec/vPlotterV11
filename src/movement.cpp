@@ -302,13 +302,32 @@ double Movement::computeCornerFactor(double dx, double dy) const {
 
 float Movement::beginLinearTravel(double x, double y, int speed) {
     if (topDistance == -1 || !homed) throw std::invalid_argument("not ready");
-    if (x < 0 || (x - 1) > width) throw std::invalid_argument("Invalid x");
-    if (y < 0) throw std::invalid_argument("Invalid y");
-    if (speed <= 0) throw std::invalid_argument("Invalid speed");
 
-    // Backlash compensation in XY when direction flips
+    // NOTE (safety vs usability):
+    // Previously we threw on invalid x/y and the whole job would appear to "stop" when a single point
+    // was slightly outside the width (often due to rounding / offsets). That is a terrible UX.
+    // New behavior: clamp into valid workspace, log a warning (rate-limited), and keep going.
+    if (speed <= 0) speed = 1;
+
     double tx = x;
     double ty = y;
+
+    const double clampedX = std::max(0.0, std::min(width, tx));
+    const double clampedY = (ty < 0.0) ? 0.0 : ty;
+
+    if (clampedX != tx || clampedY != ty) {
+        static uint32_t lastWarnMs = 0;
+        const uint32_t now = millis();
+        if (now - lastWarnMs > 500) {
+            lastWarnMs = now;
+            WebLog::warn(String("Movement | clamp XY: req(") + tx + "," + ty + ") -> (" + clampedX + "," + clampedY + ")");
+        }
+        tx = clampedX;
+        ty = clampedY;
+    }
+
+    // Backlash compensation in XY when direction flips
+    
     const double dx = tx - X;
     const double dy = ty - Y;
     int dirX = (dx > 1e-6) ? 1 : ((dx < -1e-6) ? -1 : 0);
@@ -390,13 +409,11 @@ leftMotor->setAcceleration(localAccel);
 
 int Movement::estimateMaxDeltaSteps(double x, double y, int* outDeltaLeft, int* outDeltaRight) {
     if (topDistance == -1 || !homed) throw std::invalid_argument("not ready");
-    if (x < 0 || (x - 1) > width) throw std::invalid_argument("Invalid x");
-    if (y < 0) throw std::invalid_argument("Invalid y");
 
-    // NOTE: We intentionally do NOT apply backlash compensation here.
-    // This function is for speed mapping in the planner, not for final position correction.
+    // Keep planner estimates consistent and non-fatal: clamp instead of throwing.
     const double tx = std::max(0.0, std::min(width, x));
     const double ty = (y < 0.0) ? 0.0 : y;
+
 
     const auto lengths = getBeltLengths(tx, ty);
     const int leftLegSteps = lengths.left;

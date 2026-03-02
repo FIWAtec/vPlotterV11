@@ -128,7 +128,7 @@ function classifyMarker(rgb) {
     return { label: (hsl.l >= 0.52 ? "Hellgrün" : "Dunkelgrün"), lum };
   }
 
-  if (h >= 170 && h < 210) return { label: "Türkis", lum };
+  if (h >= 1 && h < 210) return { label: "Türkis", lum };
   if (h >= 210 && h < 260) return { label: "Blau", lum };
   if (h >= 260 && h < 330) return { label: "Violett", lum };
 
