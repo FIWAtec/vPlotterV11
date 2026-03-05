@@ -33,7 +33,7 @@ body {
 }
 
 .form-signin {
-  max-width: 400px;
+  max-width: 450px;
   padding: 15px;
 }
 body > div[style*="position:fixed"][style*="right"] {

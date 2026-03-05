@@ -333,6 +333,7 @@ Plotters fail in the same predictable ways:
 - the stepper backend gets flooded with micro-moves  
 
 
+
 This project exists to fix that with:
 - lookahead planning  
 - junction-aware corner control  
