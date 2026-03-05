@@ -33,7 +33,7 @@ body {
 }
 
 .form-signin {
-  max-width: 330px;
+  max-width: 400px;
   padding: 15px;
 }
 body > div[style*="position:fixed"][style*="right"] {
@@ -43,9 +43,18 @@ body > div[style*="position:fixed"][style*="right"] {
 .bi-graph-up,
 .bi-activity,
 .bi-folder2-open,
+.bi-folder-plus,
 .bi-question-circle,
 .bi-cpu,
-.bi-chat-left-text {
+.bi-chat-left-text,
+.bi-arrow-clockwise,
+.bi-arrow-counterclockwise,
+.bi-arrow-up,
+.bi-clipboard-check,
+.bi-crosshair,
+.bi-upload,
+.bi-zoom-in,
+.bi-zoom-out {
 
   width: clamp(40px, 8vw, 52px);
   height: clamp(40px, 8vw, 52px);
@@ -841,6 +850,25 @@ main.form-signin::-webkit-scrollbar-thumb {
   background: rgba(8, 10, 20, 0.55);
 }
 
+/* Preview + Drawing: make the single canvas area actually big and fullscreen-friendly */
+#drawingPreviewSlide .job-canvas-wrap,
+#drawingBegan .job-canvas-wrap {
+  aspect-ratio: auto;
+  height: min(68vh, 760px);
+}
+
+/* Fullscreen for preview card */
+.job-canvas-card:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  margin: 0;
+}
+.job-canvas-card:fullscreen .job-canvas-wrap {
+  height: 100vh;
+  aspect-ratio: auto;
+}
+
 .job-canvas-wrap canvas {
   position: absolute;
   inset: 0;
@@ -884,6 +912,22 @@ main.form-signin::-webkit-scrollbar-thumb {
   -webkit-backdrop-filter: blur(18px) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.16);
 }
+
+.job-transform-controls {
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid rgba(255,255,255,0.18);
+}
+
+.job-transform-controls input[type="number"]{
+  background: rgba(0,0,0,0.25);
+  border: 1px solid rgba(255,255,255,0.18);
+  color: rgba(255,255,255,0.92);
+}
+
+
 
 #downloadCommandsFromDevice,
 #downloadCommandsLocal,
@@ -1563,4 +1607,550 @@ main.form-signin::-webkit-scrollbar-thumb {
   border: 1px solid rgba(255,255,255,0.08);
   box-shadow: 0 20px 60px rgba(0,0,0,0.55);
   color: #fff;
+}
+
+
+/* Job preview toolbar */
+
+.job-preview-toolbar{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  align-items:center;
+  justify-content:space-between;
+  padding:10px 12px;
+  border:1px solid rgba(255,255,255,0.12);
+  border-radius:14px;
+  background: rgba(0,0,0,0.35);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  margin-bottom:10px;
+}
+.job-preview-toolbar .btn-group .btn,
+.job-preview-toolbar .btn{
+  border-radius:14px !important;
+}
+.job-preview-toolbar #pvViewText{
+  max-width:46ch;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+@media (max-width: 900px){
+  .job-preview-toolbar{justify-content:flex-start;}
+  .job-preview-toolbar #pvViewText{max-width:34ch;}
+}
+/* ======================================================================
+   v14 - Apple x Graffiti Glass UI (append at END of main.css)
+   ====================================================================== */
+
+/* --- Font: prefer SF-like, fallback safe --- */
+:root {
+  --ui-font: ui-sans-serif, system-ui, -apple-system, "SF Pro Display", "SF Pro Text",
+             "Segoe UI", Inter, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  --bg0: #070a12;
+  --bg1: #0b1020;
+
+  /* Graffiti accents (neon but controlled) */
+  --a1: rgba(255, 72, 0, 0.95);
+  --a2: rgba(0, 195, 255, 0.95);
+  --a3: rgba(166, 0, 255, 0.90);
+
+  /* Glass */
+  --glass: rgba(10, 14, 28, 0.45);
+  --glass-2: rgba(12, 16, 34, 0.60);
+  --stroke: rgba(255,255,255,0.14);
+  --stroke-2: rgba(255,255,255,0.22);
+
+  /* Shadows */
+  --shadow-lg: 0 22px 60px rgba(0,0,0,0.55);
+  --shadow-md: 0 14px 32px rgba(0,0,0,0.45);
+  --shadow-sm: 0 8px 18px rgba(0,0,0,0.35);
+
+  /* Radius */
+  --r-lg: 26px;
+  --r-md: 18px;
+  --r-sm: 14px;
+}
+
+/* --- Global base --- */
+html, body {
+  font-family: var(--ui-font) !important;
+  background: radial-gradient(1200px 900px at 20% 10%, rgba(0,195,255,0.16), transparent 55%),
+              radial-gradient(900px 700px at 80% 15%, rgba(255,72,0,0.14), transparent 60%),
+              radial-gradient(1100px 900px at 40% 90%, rgba(166,0,255,0.12), transparent 60%),
+              linear-gradient(180deg, var(--bg0), var(--bg1)) !important;
+  color: rgba(255,255,255,0.92) !important;
+  letter-spacing: 0.2px;
+}
+
+/* --- 3D colorful blocks in background (no images) --- */
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  inset: -20vh -20vw;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.70;
+}
+
+body::before {
+  background:
+    radial-gradient(220px 180px at 18% 26%, rgba(0,195,255,0.22), transparent 60%),
+    radial-gradient(260px 220px at 72% 18%, rgba(255,72,0,0.20), transparent 60%),
+    radial-gradient(300px 240px at 58% 78%, rgba(166,0,255,0.18), transparent 60%);
+  filter: blur(18px);
+}
+
+body::after {
+  /* “Blocks”: sharp-ish gradient plates */
+  background:
+    linear-gradient(135deg, rgba(255,72,0,0.22), rgba(255,72,0,0.02) 58%) 12% 18% / 340px 240px no-repeat,
+    linear-gradient(160deg, rgba(0,195,255,0.22), rgba(0,195,255,0.02) 60%) 78% 22% / 360px 260px no-repeat,
+    linear-gradient(145deg, rgba(166,0,255,0.20), rgba(166,0,255,0.02) 62%) 64% 78% / 420px 300px no-repeat;
+  transform: translateZ(0);
+  filter: blur(0px);
+  opacity: 0.60;
+}
+
+/* ensure app content above background */
+#app, .container, .container-fluid, .muralSlide { position: relative; z-index: 1; }
+
+/* --- Cards / panels: glass + 3D --- */
+.card,
+.job-canvas-card,
+.job-transform-controls,
+.job-preview-controls {
+  background: var(--glass) !important;
+  border: 1px solid var(--stroke) !important;
+  border-radius: var(--r-lg) !important;
+  box-shadow: var(--shadow-md) !important;
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+}
+
+.card.p-2, .card.p-3, .card.p-4 {
+  border-radius: var(--r-lg) !important;
+}
+
+/* subtle inner highlight */
+.card::before,
+.job-canvas-card::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: calc(var(--r-lg) - 2px);
+  pointer-events: none;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+/* --- Headlines --- */
+h1, h2, h3, h4, h5, h6 {
+  color: rgba(255,255,255,0.94) !important;
+  text-shadow: 0 2px 18px rgba(0,0,0,0.35);
+}
+
+h3 { letter-spacing: 0.6px; }
+
+/* --- Buttons: glassy, 3D, unified --- */
+.btn,
+button.btn,
+input[type="button"].btn {
+  border-radius: 999px !important;
+  border: 1px solid var(--stroke) !important;
+  background: rgba(255,255,255,0.06) !important;
+  color: rgba(255,255,255,0.92) !important;
+  box-shadow: 0 10px 22px rgba(0,0,0,0.35);
+  backdrop-filter: blur(10px) saturate(150%);
+  -webkit-backdrop-filter: blur(10px) saturate(150%);
+  transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 34px rgba(0,0,0,0.45);
+  border-color: var(--stroke-2) !important;
+  background: rgba(255,255,255,0.10) !important;
+}
+
+.btn:active {
+  transform: translateY(0px);
+  box-shadow: 0 10px 22px rgba(0,0,0,0.35);
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, rgba(0,195,255,0.26), rgba(166,0,255,0.16)) !important;
+  border-color: rgba(0,195,255,0.28) !important;
+}
+
+.btn-success {
+  background: linear-gradient(135deg, rgba(48, 255, 133, 0.20), rgba(0,195,255,0.10)) !important;
+  border-color: rgba(48, 255, 133, 0.25) !important;
+}
+
+.btn-warning {
+  background: linear-gradient(135deg, rgba(255, 200, 60, 0.18), rgba(255,72,0,0.10)) !important;
+  border-color: rgba(255, 200, 60, 0.24) !important;
+}
+
+.btn-outline-light, .btn-outline-secondary, .btn-outline-warning {
+  background: rgba(255,255,255,0.06) !important;
+}
+
+/* Disabled state */
+.btn:disabled, .btn[disabled] {
+  opacity: 0.45 !important;
+  transform: none !important;
+}
+
+/* --- Inputs / sliders / selects --- */
+.form-control, .form-select, input[type="number"], input[type="text"] {
+  background: rgba(255,255,255,0.06) !important;
+  color: rgba(255,255,255,0.92) !important;
+  border: 1px solid var(--stroke) !important;
+  border-radius: var(--r-md) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+  backdrop-filter: blur(10px) saturate(150%);
+  -webkit-backdrop-filter: blur(10px) saturate(150%);
+}
+
+.form-control:focus, .form-select:focus {
+  border-color: rgba(0,195,255,0.35) !important;
+  box-shadow: 0 0 0 3px rgba(0,195,255,0.10) !important;
+}
+
+/* sliders */
+input[type="range"].form-range {
+  filter: drop-shadow(0 6px 10px rgba(0,0,0,0.35));
+}
+
+/* --- Progress bar: neon glass --- */
+.progress {
+  border-radius: 999px !important;
+  background: rgba(255,255,255,0.05) !important;
+  border: 1px solid rgba(255,255,255,0.10);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.progress-bar {
+  background: linear-gradient(90deg, rgba(0,195,255,0.95), rgba(166,0,255,0.85), rgba(255,72,0,0.85)) !important;
+}
+
+/* --- Preview toolbars / menus (right icons etc.) unify --- */
+.job-preview-toolbar,
+.top-right-tools,
+.preview-tools,
+.overlay-tools {
+  background: rgba(10, 14, 28, 0.38) !important;
+  border: 1px solid rgba(255,255,255,0.14) !important;
+  border-radius: 999px !important;
+  box-shadow: var(--shadow-md) !important;
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+}
+
+/* icons inside pill buttons */
+.job-preview-toolbar button,
+.top-right-tools button,
+.preview-tools button,
+.overlay-tools button {
+  background: rgba(255,255,255,0.06) !important;
+  border: 1px solid rgba(255,255,255,0.10) !important;
+  border-radius: 999px !important;
+  box-shadow: 0 10px 22px rgba(0,0,0,0.35) !important;
+}
+
+.job-preview-toolbar button:hover,
+.top-right-tools button:hover,
+.preview-tools button:hover,
+.overlay-tools button:hover {
+  background: rgba(255,255,255,0.10) !important;
+  border-color: rgba(255,255,255,0.22) !important;
+}
+
+/* --- Tables / lists (if any) --- */
+.table, table {
+  color: rgba(255,255,255,0.92) !important;
+}
+
+.table thead th {
+  background: rgba(255,255,255,0.06) !important;
+  border-bottom: 1px solid rgba(255,255,255,0.10) !important;
+}
+
+.table td, .table th {
+  border-color: rgba(255,255,255,0.08) !important;
+}
+
+/* --- Modals / dialogs --- */
+.modal-content, .toast, .dropdown-menu {
+  background: var(--glass-2) !important;
+  border: 1px solid rgba(255,255,255,0.14) !important;
+  border-radius: var(--r-lg) !important;
+  box-shadow: var(--shadow-lg) !important;
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+}
+
+/* --- Scrollbar (WebKit) --- */
+*::-webkit-scrollbar { width: 12px; height: 12px; }
+*::-webkit-scrollbar-track { background: rgba(255,255,255,0.04); }
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(0,195,255,0.55), rgba(166,0,255,0.45), rgba(255,72,0,0.35));
+  border: 3px solid rgba(0,0,0,0.20);
+  border-radius: 999px;
+}
+
+/* --- Optional: hide harsh outlines on canvases, make frame more premium --- */
+.job-canvas-wrap canvas {
+  border-radius: calc(var(--r-lg) - 6px) !important;
+}
+
+.job-canvas-card {
+  padding: 10px !important;
+}
+
+/* --- Keep status text readable --- */
+#distances, #jobTransformStatus, .text-muted {
+  color: rgba(255,255,255,0.72) !important;
+}
+
+/* ====================================================================== *//* Nur die Zeichenvorschau-Seite ausblenden (nicht den Malen-Screen!) */
+/* Zeichnungsvorschau: oberes weißes Preview-Fenster ausblenden (nur das) */
+#drawingPreviewSlide #previewSvg {
+  display: none !important;
+}
+/* v14: Smooth Background Color Cycle (30 steps) */
+html, body {
+  background: linear-gradient(135deg,
+    rgba(10, 12, 20, 1),
+    rgba(12, 16, 32, 1)
+  ) !important;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: -20vh -20vw;
+  z-index: 0;
+  pointer-events: none;
+
+  /* 3-layer smooth glow */
+  background:
+    radial-gradient(900px 700px at 20% 15%, rgba(0,195,255,0.22), transparent 60%),
+    radial-gradient(900px 700px at 80% 20%, rgba(255,72,0,0.18), transparent 60%),
+    radial-gradient(1000px 800px at 50% 85%, rgba(166,0,255,0.16), transparent 60%);
+  filter: blur(26px);
+  opacity: 0.95;
+
+  animation: bgHueCycle30 120s linear infinite;
+  will-change: filter;
+}
+
+/* keep app above background */
+#app, .container, .container-fluid, .muralSlide { position: relative; z-index: 1; }
+
+@keyframes bgHueCycle30 {
+  0%   { filter: blur(26px) hue-rotate(0deg); }
+  3.33%{ filter: blur(26px) hue-rotate(12deg); }
+  6.66%{ filter: blur(26px) hue-rotate(24deg); }
+  10%  { filter: blur(26px) hue-rotate(36deg); }
+  13.33%{ filter: blur(26px) hue-rotate(48deg); }
+  16.66%{ filter: blur(26px) hue-rotate(60deg); }
+  20%  { filter: blur(26px) hue-rotate(72deg); }
+  23.33%{ filter: blur(26px) hue-rotate(84deg); }
+  26.66%{ filter: blur(26px) hue-rotate(96deg); }
+  30%  { filter: blur(26px) hue-rotate(108deg); }
+  33.33%{ filter: blur(26px) hue-rotate(120deg); }
+  36.66%{ filter: blur(26px) hue-rotate(132deg); }
+  40%  { filter: blur(26px) hue-rotate(144deg); }
+  43.33%{ filter: blur(26px) hue-rotate(156deg); }
+  46.66%{ filter: blur(26px) hue-rotate(168deg); }
+  50%  { filter: blur(26px) hue-rotate(180deg); }
+  53.33%{ filter: blur(26px) hue-rotate(192deg); }
+  56.66%{ filter: blur(26px) hue-rotate(204deg); }
+  60%  { filter: blur(26px) hue-rotate(216deg); }
+  63.33%{ filter: blur(26px) hue-rotate(228deg); }
+  66.66%{ filter: blur(26px) hue-rotate(240deg); }
+  70%  { filter: blur(26px) hue-rotate(252deg); }
+  73.33%{ filter: blur(26px) hue-rotate(264deg); }
+  76.66%{ filter: blur(26px) hue-rotate(276deg); }
+  80%  { filter: blur(26px) hue-rotate(288deg); }
+  83.33%{ filter: blur(26px) hue-rotate(300deg); }
+  86.66%{ filter: blur(26px) hue-rotate(312deg); }
+  90%  { filter: blur(26px) hue-rotate(324deg); }
+  93.33%{ filter: blur(26px) hue-rotate(336deg); }
+  96.66%{ filter: blur(26px) hue-rotate(348deg); }
+  100% { filter: blur(26px) hue-rotate(360deg); }
+}
+/* v14: Stop UI jumping when live values update (no JS changes) */
+
+/* 1) stable digit widths */
+#runSlide, #runSlide * {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 2) prevent line wraps that change height */
+#runSlide .card,
+#runSlide .card * {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+#runSlide .card .row,
+#runSlide .card .col,
+#runSlide .card .d-flex,
+#runSlide .card .small,
+#runSlide .card .text-muted {
+  white-space: nowrap;
+}
+
+/* 3) keep values aligned in a grid; prevents width-triggered reflow */
+#runSlide .card .row {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 10px 18px !important;
+}
+
+/* Bootstrap col-* inside becomes grid items */
+#runSlide .card .row > [class*="col-"] {
+  width: auto !important;
+  max-width: none !important;
+}
+
+/* 4) reserve height for the “most unstable” block so it doesn’t grow/shrink */
+#runSlide .card {
+  min-height: 320px; /* adjust if your card is smaller/larger */
+}
+
+/* 5) clamp huge numbers and avoid “9999999999” blowing layout */
+#runSlide .card strong,
+#runSlide .card b,
+#runSlide .card .fw-bold {
+  display: inline-block;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  vertical-align: bottom;
+}
+
+/* 6) contain reflow to the card */
+#runSlide .card {
+  contain: layout paint;
+}
+
+/* 7) buttons never move */
+#runSlide .btn {
+  position: sticky;
+  bottom: 10px;
+}
+/* ===== v14: Background Color Cycle FIX (30 colors) ===== */
+
+/* 1) Make --bg-color animatable (required!) */
+@property --bg-color {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #1e21ce;
+}
+
+/* 2) Ensure nothing later forces a fixed background */
+html {
+  background: none !important;
+  background-color: var(--bg-color) !important;
+}
+
+/* body stays transparent so html background + html::before/after glow stays visible */
+body {
+  background: transparent !important;
+}
+
+/* 3) Animate the VARIABLE (so derived vars --bg-hi/--bg-lo also change) */
+:root {
+  animation: bgVarCycle30 180s linear infinite;
+}
+
+@keyframes bgVarCycle30 {
+  0%     { --bg-color: #1e21ce; }
+  3.33%  { --bg-color: #176bff; }
+  6.66%  { --bg-color: #00a3ff; }
+  10%    { --bg-color: #00d1c7; }
+  13.33% { --bg-color: #00d17a; }
+  16.66% { --bg-color: #20c05b; }
+  20%    { --bg-color: #6fd13b; }
+  23.33% { --bg-color: #b7d12b; }
+  26.66% { --bg-color: #ffd24a; }
+  30%    { --bg-color: #ffb13a; }
+  33.33% { --bg-color: #ff8a2a; }
+  36.66% { --bg-color: #ff5a2a; }
+  40%    { --bg-color: #ff2f55; }
+  43.33% { --bg-color: #ff2fb0; }
+  46.66% { --bg-color: #d92fff; }
+  50%    { --bg-color: #8a2fff; }
+  53.33% { --bg-color: #4f2fff; }
+  56.66% { --bg-color: #2f46ff; }
+  60%    { --bg-color: #2f7cff; }
+  63.33% { --bg-color: #2fb2ff; }
+  66.66% { --bg-color: #2fe0ff; }
+  70%    { --bg-color: #2fffd5; }
+  73.33% { --bg-color: #2fff9b; }
+  76.66% { --bg-color: #2fff66; }
+  80%    { --bg-color: #66ff2f; }
+  83.33% { --bg-color: #a1ff2f; }
+  86.66% { --bg-color: #dbff2f; }
+  90%    { --bg-color: #fff12f; }
+  93.33% { --bg-color: #ffd12f; }
+  96.66% { --bg-color: #ff9a2f; }
+  100%   { --bg-color: #1e21ce; }
+}
+/* ===== v14: Malen-Menü darf nicht wackeln (nur CSS, Background bleibt) ===== */
+
+/* Ziffern gleich breit -> weniger Sprünge */
+#drawingBegan, #drawingBegan *{
+  font-variant-numeric: tabular-nums;
+}
+
+/* Telemetry-Block bekommt stabile Geometrie */
+#drawingBegan .telemetry{
+  min-height: 420px;            /* reserviert Platz, verhindert Höhen-Jumps */
+  contain: layout paint;        /* Reflow lokal halten */
+}
+
+/* Die typischen Live-Zeilen nicht umbrechen lassen */
+#drawingBegan #coordsDisplay,
+#drawingBegan #drawProgressText,
+#drawingBegan #drawPenSpeedMultText,
+#drawingBegan #drawPenSpeedStatus,
+#drawingBegan #spoolInfo{
+  white-space: nowrap;
+}
+
+/* Labels/Values: kein Wrap, damit nichts „springt“ */
+#drawingBegan label.form-label,
+#drawingBegan .small.text-muted{
+  white-space: nowrap;
+}
+
+/* Falls ein Wert extrem lang wird: abschneiden statt Layout sprengen */
+#drawingBegan strong,
+#drawingBegan .text-muted,
+#drawingBegan #coordsDisplay{
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+/* PausePanel: kein flex-wrap -> Buttons springen nicht in neue Zeile */
+#drawingBegan #pausePanel .d-flex{
+  flex-wrap: nowrap !important;
+  gap: 10px !important;
+  overflow-x: auto;             /* wenn zu eng, scrollt es horizontal */
+}
+
+/* Buttons behalten Größe -> stabil */
+#drawingBegan button.btn{
+  flex: 0 0 auto;
 }

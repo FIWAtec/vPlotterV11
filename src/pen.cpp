@@ -18,7 +18,7 @@ static void doSlowMove(Pen *pen, int startDegree, int targetDegree, int speedDeg
     {
         pen->setRawValue(currentDegree);
         // Faster, still stable.
-        delay(1);
+        delay(2);
 
         unsigned long delta = millis() - startTime;
         int progress = (int)((double)delta / 1000.0 * speedDegPerSec);
@@ -27,24 +27,25 @@ static void doSlowMove(Pen *pen, int startDegree, int targetDegree, int speedDeg
     }
 
     pen->setRawValue(targetDegree);
-    delay(10);
+    delay(15);
 }
 
 Pen::Pen()
 {
     penServo = new Servo();
-    penServo->attach(PEN_SERVO_PIN);
-
+    penServo->attach(PEN_SERVO_PIN, 500, 2500);
+    
     upAngle = PEN_START_POS;
-    downAngle = 80;
+    downAngle = 60;
 
     pendingUpAngle = upAngle;
     pendingDownAngle = downAngle;
     hasPendingUp = false;
     hasPendingDown = false;
 
-    // Faster default for drawing.
-    slowSpeedDegPerSec = 140;
+    // Slower default -> quieter servo motion
+    slowSpeedDegPerSec = 40;
+
     currentPosition = upAngle;
     penServo->write(currentPosition);
 }

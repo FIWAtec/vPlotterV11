@@ -138,17 +138,6 @@ function updatePerfHud() {
     <div class="perfHudRow"><span>Ø Speed (Move)</span><b>${Number(liveHud.avgSpeedMmS||0).toFixed(1)} mm/s</b></div>
     <div class="perfHudRow"><span>FW MaxLoop</span><b>${escapeHtml(maxLoop)}</b></div>
   `;
-
-  // Also show compact stats in the drawing screen (old menu), if present.
-  try {
-    const el = document.getElementById("drawStatsText");
-    if (el) {
-      const drawM = (Number(liveHud.distDrawMm || 0) / 1000).toFixed(2);
-      const moveM = (Number(liveHud.distTravelMm || 0) / 1000).toFixed(2);
-      const spd  = Number(liveHud.avgSpeedMmS || 0).toFixed(1);
-      el.textContent = `Draw ${drawM} m | Move ${moveM} m | Ø ${spd} mm/s`;
-    }
-  } catch {}
 }
 
 function updatePerfSettingsMeasured() {
@@ -1042,6 +1031,26 @@ let diagCache = null;
 let plannedPreviewCanvas = null;
 let plannedLiveCanvas = null;
 
+// v14: Preview editor (single window) - pan/zoom + eraser (non-destructive pen-up)
+const PREVIEW_VIEW = {
+  scale: 1.0,
+  panX: 0.0,
+  panY: 0.0,
+  showGrid: false,
+  cursorXmm: NaN,
+  cursorYmm: NaN,
+};
+
+const JOB_EDIT = {
+  enabled: true,
+  mode: "pan", // "pan" | "erase"
+  eraserRadiusMm: 6.0,
+  deletedSeg: new Set(), // segment indices -> pen-up
+  isPointerDown: false,
+  lastPx: null,
+  busy: false,
+};
+
 const NEON_YELLOW = "rgba(255, 241, 0, 0.95)";
 const FAINT_PLAN = "rgba(255,255,255,0.14)";
 const FAINT_TRAVEL = "rgba(120,170,255,0.08)";
@@ -1224,21 +1233,58 @@ function findSegmentIndexByDistance(model, dist) {
   return Math.max(0, model.segments.length - 1);
 }
 
-function computeTransformForCanvas(model, canvasW, canvasH, pad = 16) {
-  const b = model.bbox;
-  const w = Math.max(1, b.maxX - b.minX);
-  const h = Math.max(1, b.maxY - b.minY);
 
-  const scale = Math.min((canvasW - 2*pad) / w, (canvasH - 2*pad) / h);
-  const ox = pad - b.minX * scale;
-  const oy = pad - b.minY * scale;
+function computeTransformForCanvas(model, canvasW, canvasH, pad = 16) {
+  // We render the full machine area (TopDistance × Height) so that the user can
+  // visually position the job inside the paint area (instead of auto-fitting the bbox).
+  const topDistance = Number(currentState?.topDistance ?? 0);
+  const height = Number(model?.height ?? 0);
+
+  // Fallbacks if the state is not available yet
+  const b = model?.bbox || { minX: 0, minY: 0, maxX: 1, maxY: 1 };
+  const fallbackW = Math.max(1, (b.maxX - b.minX) || 1);
+  const fallbackH = Math.max(1, (b.maxY - b.minY) || 1);
+
+  const areaW = (topDistance > 0) ? topDistance : fallbackW;
+  const areaH = (height > 0) ? height : fallbackH;
+
+  const scale = Math.min((canvasW - 2 * pad) / areaW, (canvasH - 2 * pad) / areaH);
+
+  // Origin (0,0) at top-left of machine area
+  const ox = pad;
+  const oy = pad;
 
   return {
     scale,
     ox,
     oy,
+    areaW,
+    areaH,
     mmToPx(x, y) {
       return { x: x * scale + ox, y: y * scale + oy };
+    },
+    pxToMm(px, py) {
+      return { x: (px - ox) / scale, y: (py - oy) / scale };
+    }
+  };
+}
+
+function computeTransformForCanvasWithView(model, canvasW, canvasH, pad = 16, view = PREVIEW_VIEW) {
+  const base = computeTransformForCanvas(model, canvasW, canvasH, pad);
+  const vs = Math.max(0.2, Math.min(10.0, Number(view?.scale) || 1.0));
+  const vx = Number(view?.panX) || 0.0;
+  const vy = Number(view?.panY) || 0.0;
+
+  return {
+    ...base,
+    viewScale: vs,
+    viewPanX: vx,
+    viewPanY: vy,
+    mmToPx(x, y) {
+      return { x: (x * base.scale) * vs + base.ox + vx, y: (y * base.scale) * vs + base.oy + vy };
+    },
+    pxToMm(px, py) {
+      return { x: ((px - base.ox - vx) / (base.scale * vs)), y: ((py - base.oy - vy) / (base.scale * vs)) };
     }
   };
 }
@@ -1257,28 +1303,30 @@ function ensureCanvasSize(canvas) {
   return { w, h, dpr };
 }
 
-function drawBackground(ctx, w, h) {
+function drawBackground(ctx, w, h, showGrid = true) {
   ctx.save();
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = "rgba(8, 10, 20, 0.70)";
   ctx.fillRect(0, 0, w, h);
 
-  // dezentes Grid
-  ctx.globalAlpha = 0.18;
-  ctx.strokeStyle = "rgba(255,255,255,0.22)";
-  ctx.lineWidth = 1;
-  const step = Math.max(40, Math.floor(Math.min(w, h) / 12));
-  for (let x = 0; x < w; x += step) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, h);
-    ctx.stroke();
-  }
-  for (let y = 0; y < h; y += step) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(w, y);
-    ctx.stroke();
+  if (showGrid) {
+    // dezentes Grid
+    ctx.globalAlpha = 0.18;
+    ctx.strokeStyle = "rgba(255,255,255,0.22)";
+    ctx.lineWidth = 1;
+    const step = Math.max(40, Math.floor(Math.min(w, h) / 12));
+    for (let x = 0; x < w; x += step) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, h);
+      ctx.stroke();
+    }
+    for (let y = 0; y < h; y += step) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+    }
   }
 
   ctx.restore();
@@ -1343,6 +1391,47 @@ function drawCrosshair(overlayCtx, x, y, label = "") {
     overlayCtx.font = "12px system-ui, -apple-system, Segoe UI, Roboto";
     overlayCtx.fillStyle = "rgba(255,255,255,0.85)";
     overlayCtx.fillText(label, Math.min(w - 8, x + 10), Math.max(14, y - 10));
+  }
+
+  overlayCtx.restore();
+}
+
+function drawAxes(overlayCtx, tr) {
+  // Calm axis ticks for X (top) and Y (left)
+  const w = overlayCtx.canvas.width;
+  const h = overlayCtx.canvas.height;
+  const stepMm = 100;
+  const maxTicksX = Math.min(120, Math.ceil(tr.areaW / stepMm) + 1);
+  const maxTicksY = Math.min(120, Math.ceil(tr.areaH / stepMm) + 1);
+
+  overlayCtx.save();
+  overlayCtx.strokeStyle = "rgba(255,255,255,0.18)";
+  overlayCtx.fillStyle = "rgba(255,255,255,0.55)";
+  overlayCtx.lineWidth = 1;
+  overlayCtx.font = "11px system-ui, -apple-system, Segoe UI, Roboto";
+
+  // X axis ticks (top)
+  for (let i = 0; i < maxTicksX; i++) {
+    const mm = i * stepMm;
+    const p = tr.mmToPx(mm, 0);
+    if (p.x < 0 || p.x > w) continue;
+    overlayCtx.beginPath();
+    overlayCtx.moveTo(p.x, tr.oy + tr.viewPanY - 6);
+    overlayCtx.lineTo(p.x, tr.oy + tr.viewPanY + 6);
+    overlayCtx.stroke();
+    overlayCtx.fillText(`${mm}`, p.x + 2, tr.oy + tr.viewPanY + 18);
+  }
+
+  // Y axis ticks (left)
+  for (let i = 0; i < maxTicksY; i++) {
+    const mm = i * stepMm;
+    const p = tr.mmToPx(0, mm);
+    if (p.y < 0 || p.y > h) continue;
+    overlayCtx.beginPath();
+    overlayCtx.moveTo(tr.ox + tr.viewPanX - 6, p.y);
+    overlayCtx.lineTo(tr.ox + tr.viewPanX + 6, p.y);
+    overlayCtx.stroke();
+    overlayCtx.fillText(`${mm}`, tr.ox + tr.viewPanX + 10, p.y - 2);
   }
 
   overlayCtx.restore();
@@ -1437,6 +1526,15 @@ async function initJobPreviewFromCommands(commandsText) {
     const tParse0 = performance.now();
     jobModel = await parseCommandsToModel(commandsText, homeX, homeY);
 
+    // Reset preview view + editor for new commands
+    PREVIEW_VIEW.scale = 1.0;
+    PREVIEW_VIEW.panX = 0.0;
+    PREVIEW_VIEW.panY = 0.0;
+    JOB_EDIT.deletedSeg.clear();
+    JOB_EDIT.mode = "pan";
+    JOB_EDIT.lastPx = null;
+    JOB_EDIT.isPointerDown = false;
+
     // Event: JobModel verfügbar (für Live-HUD/Stats)
     try {
       window.dispatchEvent(new CustomEvent("mural:jobModel", {
@@ -1486,6 +1584,9 @@ async function initJobPreviewFromCommands(commandsText) {
     await renderPlannedPreview();
     updatePreviewOverlay();
 
+    // Editor UI (pan/zoom + eraser) - no popups
+    try { ensureJobPreviewToolbar(); bindJobPreviewPointerHandlers(); } catch (e) { console.warn(e); }
+
     const t1 = performance.now();
     setPerfStat("initMs", t1 - t0);
 
@@ -1496,6 +1597,554 @@ async function initJobPreviewFromCommands(commandsText) {
   }
 }
 
+function ensureJobPreviewToolbar() {
+  const wrap = document.getElementById("jobPreviewWrap");
+  if (!wrap) return;
+
+  const card = wrap.querySelector(".job-canvas-card");
+  const host = wrap.querySelector(".job-canvas-wrap");
+  if (!card || !host) return;
+
+  let bar = document.getElementById("jobPreviewToolbar");
+  if (bar) return;
+
+  bar = document.createElement("div");
+  bar.id = "jobPreviewToolbar";
+  // Place toolbar ABOVE the canvas (not overlay), so the preview stays readable.
+  bar.className = "job-preview-toolbar";
+
+
+  bar.innerHTML = `
+    <div style="display:flex; gap:10px; align-items:center;">
+      <div class="btn-group btn-group-sm" role="group" aria-label="Preview tools">
+        <button class="btn btn-outline-light" id="pvToolPan" type="button" title="Verschieben (Pan)">
+          <i class="bi-hand-index-thumb"></i>
+        </button>
+        <button class="btn btn-outline-warning" id="pvToolErase" type="button" title="Radiergummi (löscht nur Zeichnung = Pen-UP)">
+          <i class="bi-eraser"></i>
+        </button>
+        <button class="btn btn-outline-secondary" id="pvToolResetView" type="button" title="Ansicht zurücksetzen">
+          <i class="bi-arrow-counterclockwise"></i>
+        </button>
+        <button class="btn btn-outline-light" id="pvToggleGrid" type="button" title="Raster ein/aus">
+          <i class="bi-grid-3x3"></i>
+        </button>
+        <button class="btn btn-outline-light" id="pvFullscreen" type="button" title="Fullscreen">
+          <i class="bi-arrows-fullscreen"></i>
+        </button>
+      </div>
+
+      <div class="btn-group btn-group-sm" role="group" aria-label="Pan dpad" style="margin-left:6px;">
+        <button class="btn btn-outline-light" id="pvPanUp" type="button" title="Pan hoch"><i class="bi-caret-up-fill"></i></button>
+        <button class="btn btn-outline-light" id="pvPanLeft" type="button" title="Pan links"><i class="bi-caret-left-fill"></i></button>
+        <button class="btn btn-outline-light" id="pvPanRight" type="button" title="Pan rechts"><i class="bi-caret-right-fill"></i></button>
+        <button class="btn btn-outline-light" id="pvPanDown" type="button" title="Pan runter"><i class="bi-caret-down-fill"></i></button>
+      </div>
+
+      <div class="d-flex align-items-center gap-2" style="min-width:260px;">
+        <small class="text-muted">Radiergröße</small>
+        <input id="pvEraserSize" type="range" class="form-range" min="2" max="30" step="1" value="6" style="width:140px;">
+        <small class="text-muted" id="pvEraserSizeText">6 mm</small>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:10px; align-items:center;">
+      <small class="text-muted" id="pvViewText">Zoom 100% · Pan 0/0 · X/Y — · Erased 0</small>
+      <button class="btn btn-success btn-sm" id="pvApplyEdits" type="button" title="Änderungen in Commands übernehmen">
+        <i class="bi-check2"></i> Speichern
+      </button>
+    </div>
+  `;
+
+  // Insert toolbar as first element inside the card.
+  card.insertBefore(bar, card.firstChild);
+
+  const setMode = (m) => {
+    JOB_EDIT.mode = m;
+    const bPan = document.getElementById("pvToolPan");
+    const bEr = document.getElementById("pvToolErase");
+    if (bPan) bPan.classList.toggle("active", m === "pan");
+    if (bEr)  bEr.classList.toggle("active", m === "erase");
+  };
+
+  document.getElementById("pvToolPan")?.addEventListener("click", () => setMode("pan"));
+  document.getElementById("pvToolErase")?.addEventListener("click", () => setMode("erase"));
+  document.getElementById("pvToolResetView")?.addEventListener("click", () => {
+    PREVIEW_VIEW.scale = 1.0; PREVIEW_VIEW.panX = 0.0; PREVIEW_VIEW.panY = 0.0;
+    renderPlannedPreview().then(updatePreviewOverlay);
+    updatePreviewToolbarText();
+  });
+
+  document.getElementById("pvToggleGrid")?.addEventListener("click", async () => {
+    PREVIEW_VIEW.showGrid = !PREVIEW_VIEW.showGrid;
+    document.getElementById("pvToggleGrid")?.classList.toggle("active", !!PREVIEW_VIEW.showGrid);
+    await renderPlannedPreview();
+    updatePreviewOverlay();
+    updatePreviewToolbarText();
+  });
+
+  document.getElementById("pvFullscreen")?.addEventListener("click", async () => {
+    try {
+      const card = document.querySelector("#jobPreviewWrap .job-canvas-card") || host;
+      if (!document.fullscreenElement) {
+        await (card.requestFullscreen ? card.requestFullscreen() : host.requestFullscreen());
+      } else {
+        await document.exitFullscreen();
+      }
+      setTimeout(() => { renderPlannedPreview().then(updatePreviewOverlay); }, 120);
+    } catch (e) {
+      console.warn("fullscreen failed", e);
+    }
+  });
+
+  const panNudge = async (dx, dy) => {
+    const step = 24 * (window.devicePixelRatio || 1);
+    PREVIEW_VIEW.panX += dx * step;
+    PREVIEW_VIEW.panY += dy * step;
+    await renderPlannedPreview();
+    updatePreviewOverlay();
+    updatePreviewToolbarText();
+  };
+  document.getElementById("pvPanUp")?.addEventListener("click", () => panNudge(0, -1));
+  document.getElementById("pvPanDown")?.addEventListener("click", () => panNudge(0, 1));
+  document.getElementById("pvPanLeft")?.addEventListener("click", () => panNudge(-1, 0));
+  document.getElementById("pvPanRight")?.addEventListener("click", () => panNudge(1, 0));
+
+  const er = document.getElementById("pvEraserSize");
+  const erTxt = document.getElementById("pvEraserSizeText");
+  if (er) {
+    er.addEventListener("input", () => {
+      JOB_EDIT.eraserRadiusMm = Number(er.value) || 6;
+      if (erTxt) erTxt.textContent = `${JOB_EDIT.eraserRadiusMm.toFixed(0)} mm`;
+    });
+    JOB_EDIT.eraserRadiusMm = Number(er.value) || 6;
+    if (erTxt) erTxt.textContent = `${JOB_EDIT.eraserRadiusMm.toFixed(0)} mm`;
+  }
+
+  document.getElementById("pvApplyEdits")?.addEventListener("click", async () => {
+    if (!jobModel) return;
+    if (!uploadConvertedCommands) return;
+    const newTxt = buildEditedCommands(uploadConvertedCommands, jobModel, JOB_EDIT.deletedSeg);
+    uploadConvertedCommands = newTxt;
+    initJobTransformForCommands(uploadConvertedCommands);
+    await initJobPreviewFromCommands(uploadConvertedCommands);
+  });
+
+  setMode("pan");
+  updatePreviewToolbarText();
+}
+
+function updatePreviewToolbarText() {
+  const el = document.getElementById("pvViewText");
+  if (!el) return;
+  const z = Math.round((PREVIEW_VIEW.scale || 1) * 100);
+  const px = Math.round(PREVIEW_VIEW.panX || 0);
+  const py = Math.round(PREVIEW_VIEW.panY || 0);
+  const del = JOB_EDIT.deletedSeg.size;
+  const cx = Number.isFinite(PREVIEW_VIEW.cursorXmm) ? PREVIEW_VIEW.cursorXmm.toFixed(1) : "—";
+  const cy = Number.isFinite(PREVIEW_VIEW.cursorYmm) ? PREVIEW_VIEW.cursorYmm.toFixed(1) : "—";
+  el.textContent = `Zoom ${z}% · Pan ${px}/${py} · X/Y ${cx}/${cy} mm · Erased ${del}`;
+}
+
+function buildEditedCommands(originalText, model, deletedSegSet) {
+  const raw = String(originalText || "");
+  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+  if (lines.length < 2) return raw;
+
+  const heightLine = lines[1];
+  const height = (heightLine && heightLine[0] === "h") ? (Number.parseFloat(heightLine.slice(1)) || 0) : (Number(model?.height) || 0);
+
+  // Keep the physical travel distance identical: we keep all moves, but force pen-up on erased segments.
+  let total = 0.0;
+  for (const s of (model?.segments || [])) total += (Number(s.len) || 0);
+
+  const out = [];
+  out.push(`d${total.toFixed(3)}`);
+  out.push(`h${Number(height).toFixed(3)}`);
+
+  let penDownOut = false;
+  const segs = model?.segments || [];
+  for (let i = 0; i < segs.length; i++) {
+    const seg = segs[i];
+    const erased = deletedSegSet?.has(i);
+    const desiredDown = (!erased) && !!seg.penDown;
+
+    if (desiredDown !== penDownOut) {
+      out.push(desiredDown ? "p1" : "p0");
+      penDownOut = desiredDown;
+    }
+
+    out.push(`${Number(seg.x2).toFixed(3)} ${Number(seg.y2).toFixed(3)}`);
+  }
+
+  return out.join("\n") + "\n";
+}
+
+function bindJobPreviewPointerHandlers() {
+  if (bindJobPreviewPointerHandlers.__bound) return;
+
+  const overlay = document.getElementById("jobPreviewOverlay");
+  const canvas = document.getElementById("jobPreviewCanvas");
+  if (!overlay || !canvas) return;
+
+  const getLocalPx = (ev) => {
+    const rect = overlay.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const x = (ev.clientX - rect.left) * dpr;
+    const y = (ev.clientY - rect.top) * dpr;
+    return { x, y };
+  };
+
+  const doEraseAtPx = async (px) => {
+    if (!jobModel) return;
+    if (JOB_EDIT.busy) return;
+    JOB_EDIT.busy = true;
+    try {
+      const tr = computeTransformForCanvasWithView(jobModel, overlay.width, overlay.height, 16, PREVIEW_VIEW);
+      const mm = tr.pxToMm(px.x, px.y);
+      const rMm = Math.max(1.0, Number(JOB_EDIT.eraserRadiusMm) || 6.0);
+      const r = rMm;
+
+      // Chunked scan with bbox test
+      const segs = jobModel.segments || [];
+      const r2 = r * r;
+      for (let i = 0; i < segs.length; i++) {
+        const s = segs[i];
+        if (!s.penDown) continue; // only meaningful for drawn lines
+
+        const minX = Math.min(s.x1, s.x2) - r;
+        const maxX = Math.max(s.x1, s.x2) + r;
+        const minY = Math.min(s.y1, s.y2) - r;
+        const maxY = Math.max(s.y1, s.y2) + r;
+        if (mm.x < minX || mm.x > maxX || mm.y < minY || mm.y > maxY) {
+          // no hit
+        } else {
+          // distance point -> segment
+          const dx = s.x2 - s.x1;
+          const dy = s.y2 - s.y1;
+          const len2 = dx*dx + dy*dy;
+          let t = 0.0;
+          if (len2 > 1e-9) t = ((mm.x - s.x1)*dx + (mm.y - s.y1)*dy) / len2;
+          t = Math.max(0.0, Math.min(1.0, t));
+          const pxm = s.x1 + dx * t;
+          const pym = s.y1 + dy * t;
+          const ddx = mm.x - pxm;
+          const ddy = mm.y - pym;
+          if ((ddx*ddx + ddy*ddy) <= r2) {
+            JOB_EDIT.deletedSeg.add(i);
+          }
+        }
+
+        if ((i % 2000) === 0) await nextTick();
+      }
+
+      // Re-render planned preview with pen-up overlays
+      applyDeletedSegToModel(jobModel, JOB_EDIT.deletedSeg);
+      await renderPlannedPreview();
+      updatePreviewOverlay();
+      updatePreviewToolbarText();
+    } finally {
+      JOB_EDIT.busy = false;
+    }
+  };
+
+  overlay.addEventListener("pointerdown", async (ev) => {
+    if (ev.button !== 0) return;
+    JOB_EDIT.isPointerDown = true;
+    overlay.setPointerCapture(ev.pointerId);
+    const p = getLocalPx(ev);
+    JOB_EDIT.lastPx = p;
+    if (JOB_EDIT.mode === "erase") {
+      await doEraseAtPx(p);
+    }
+  });
+
+  overlay.addEventListener("pointermove", async (ev) => {
+    // Always track cursor position in mm for the toolbar
+    try {
+      if (jobModel) {
+        const p = getLocalPx(ev);
+        const tr = computeTransformForCanvasWithView(jobModel, overlay.width, overlay.height, 16, PREVIEW_VIEW);
+        const mm = tr.pxToMm(p.x, p.y);
+        PREVIEW_VIEW.cursorXmm = mm.x;
+        PREVIEW_VIEW.cursorYmm = mm.y;
+        updatePreviewToolbarText();
+      }
+    } catch {}
+
+    if (!JOB_EDIT.isPointerDown) return;
+    const p = getLocalPx(ev);
+    const last = JOB_EDIT.lastPx || p;
+
+    if (JOB_EDIT.mode === "pan") {
+      PREVIEW_VIEW.panX += (p.x - last.x);
+      PREVIEW_VIEW.panY += (p.y - last.y);
+      JOB_EDIT.lastPx = p;
+      await renderPlannedPreview();
+      updatePreviewOverlay();
+      updatePreviewToolbarText();
+    } else if (JOB_EDIT.mode === "erase") {
+      JOB_EDIT.lastPx = p;
+      await doEraseAtPx(p);
+    }
+  });
+
+  overlay.addEventListener("pointerup", (ev) => {
+    JOB_EDIT.isPointerDown = false;
+    JOB_EDIT.lastPx = null;
+    try { overlay.releasePointerCapture(ev.pointerId); } catch {}
+  });
+  overlay.addEventListener("pointercancel", () => {
+    JOB_EDIT.isPointerDown = false;
+    JOB_EDIT.lastPx = null;
+  });
+
+  // Wheel zoom (centered at cursor)
+  overlay.addEventListener("wheel", async (ev) => {
+    ev.preventDefault();
+    if (!jobModel) return;
+    const p = getLocalPx(ev);
+    const tr = computeTransformForCanvasWithView(jobModel, overlay.width, overlay.height, 16, PREVIEW_VIEW);
+    const mmBefore = tr.pxToMm(p.x, p.y);
+
+    const delta = Math.sign(ev.deltaY);
+    // Extra-zoom for erase mode (faster zoom steps)
+    const fast = (JOB_EDIT.mode === "erase");
+    const factor = (delta > 0)
+      ? (fast ? 0.82 : 0.90)
+      : (fast ? 1.22 : 1.11);
+    const newScale = Math.max(0.25, Math.min(6.0, (PREVIEW_VIEW.scale || 1) * factor));
+    PREVIEW_VIEW.scale = newScale;
+
+    const trAfter = computeTransformForCanvasWithView(jobModel, overlay.width, overlay.height, 16, PREVIEW_VIEW);
+    const pAfter = trAfter.mmToPx(mmBefore.x, mmBefore.y);
+    PREVIEW_VIEW.panX += (p.x - pAfter.x);
+    PREVIEW_VIEW.panY += (p.y - pAfter.y);
+
+    await renderPlannedPreview();
+    updatePreviewOverlay();
+    updatePreviewToolbarText();
+  }, { passive: false });
+
+  bindJobPreviewPointerHandlers.__bound = true;
+}
+
+function applyDeletedSegToModel(model, deletedSegSet) {
+  if (!model || !model.segments) return;
+  for (let i = 0; i < model.segments.length; i++) {
+    const s = model.segments[i];
+    // Non-destructive: keep travel, but force penUp for erased segments
+    if (deletedSegSet?.has(i)) {
+      s.__penDownOrig = (s.__penDownOrig ?? s.penDown);
+      s.penDown = false;
+    } else {
+      if (s.__penDownOrig !== undefined) {
+        s.penDown = !!s.__penDownOrig;
+      }
+    }
+  }
+}
+
+
+
+// ----------------------------
+// Job transform (scale + offset) for commands preview
+// ----------------------------
+let jobTransformState = {
+  zoomPct: 100,
+  offX: 0.0,
+  offY: 0.0,
+};
+let jobTransformOriginalCommands = null; // used for reset and non-cumulative transforms
+let jobTransformUiBound = false;
+
+function updateJobTransformStatus() {
+  const z = Number(jobTransformState.zoomPct) || 100;
+  const x = Number(jobTransformState.offX) || 0;
+  const y = Number(jobTransformState.offY) || 0;
+
+  const zTxt = document.getElementById("jobZoomText");
+  if (zTxt) zTxt.textContent = `${z}%`;
+  const st = document.getElementById("jobTransformStatus");
+  if (st) st.textContent = `Zoom: ${z}% · X: ${x.toFixed(1)} mm · Y: ${y.toFixed(1)} mm`;
+}
+
+function applyTransformToCommandsText(commandsText, zoomPct, offX, offY) {
+  const scale = Math.max(0.10, Math.min(3.00, (Number(zoomPct) || 100) / 100.0));
+  const dx = Number(offX) || 0;
+  const dy = Number(offY) || 0;
+  // Anchor zoom around job bounding-box center (stable zoom/pan UX)
+  let ax = 0, ay = 0;
+  try {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const raw of String(commandsText || "").split(/\r?\n/)) {
+      const line = (raw || "").trim();
+      if (!line) continue;
+      if (line.startsWith("d") || line.startsWith("h")) continue;
+      if (line === "p0" || line === "p1") continue;
+      if (line.startsWith("g2") || line.startsWith("g3")) {
+        const parts = line.split(/\s+/);
+        for (const p of parts) {
+          const k = p.substring(0,1).toUpperCase();
+          const v = parseFloat(p.substring(1));
+          if (!isFinite(v)) continue;
+          if (k === "X") { minX = Math.min(minX, v); maxX = Math.max(maxX, v); }
+          if (k === "Y") { minY = Math.min(minY, v); maxY = Math.max(maxY, v); }
+        }
+        continue;
+      }
+      const parts = line.split(/\s+/);
+      if (parts.length >= 2) {
+        const x = parseFloat(parts[0]);
+        const y = parseFloat(parts[1]);
+        if (isFinite(x) && isFinite(y)) {
+          minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+          minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+        }
+      }
+    }
+    if (isFinite(minX) && isFinite(maxX)) ax = (minX + maxX) / 2;
+    if (isFinite(minY) && isFinite(maxY)) ay = (minY + maxY) / 2;
+  } catch {}
+
+
+  const out = [];
+  const lines = String(commandsText || "").split(/\r?\n/);
+
+  for (let raw of lines) {
+    const line = (raw || "").trim();
+    if (!line) continue;
+
+    // header lines
+    if (line.startsWith("d") || line.startsWith("h")) {
+      out.push(line);
+      continue;
+    }
+
+    // pen toggles
+    if (line === "p0" || line === "p1") {
+      out.push(line);
+      continue;
+    }
+
+    // arcs: g2/g3 X.. Y.. I.. J..
+    if (line.startsWith("g2") || line.startsWith("g3")) {
+      const parts = line.split(/\s+/);
+      const cmd = parts.shift();
+      const kv = {};
+      for (const p of parts) {
+        const k = p.substring(0,1).toUpperCase();
+        const v = parseFloat(p.substring(1));
+        if (!isFinite(v)) continue;
+        kv[k] = v;
+      }
+      if (isFinite(kv["X"])) kv["X"] = (kv["X"] - ax) * scale + ax + dx;
+      if (isFinite(kv["Y"])) kv["Y"] = (kv["Y"] - ay) * scale + ay + dy;
+      if (isFinite(kv["I"])) kv["I"] = kv["I"] * scale; // relative vector: scale only
+      if (isFinite(kv["J"])) kv["J"] = kv["J"] * scale;
+
+      const rebuilt = [cmd];
+      if (kv["X"] != null) rebuilt.push(`X${kv["X"].toFixed(1)}`);
+      if (kv["Y"] != null) rebuilt.push(`Y${kv["Y"].toFixed(1)}`);
+      if (kv["I"] != null) rebuilt.push(`I${kv["I"].toFixed(3)}`);
+      if (kv["J"] != null) rebuilt.push(`J${kv["J"].toFixed(3)}`);
+      out.push(rebuilt.join(" "));
+      continue;
+    }
+
+    // plain point: "x y"
+    const sp = line.indexOf(" ");
+    if (sp > 0) {
+      const xs = line.substring(0, sp);
+      const ys = line.substring(sp + 1);
+      const x = parseFloat(xs);
+      const y = parseFloat(ys);
+      if (isFinite(x) && isFinite(y)) {
+        const nx = (x - ax) * scale + ax + dx;
+        const ny = (y - ay) * scale + ay + dy;
+        out.push(`${nx.toFixed(1)} ${ny.toFixed(1)}`);
+        continue;
+      }
+    }
+
+    // unknown token -> keep (defensive)
+    out.push(line);
+  }
+
+  return out.join("\n") + "\n";
+}
+
+function bindJobTransformUiOnce() {
+  if (jobTransformUiBound) return;
+  jobTransformUiBound = true;
+
+  const zoomEl = document.getElementById("jobZoom");
+  const offXEl = document.getElementById("jobOffsetX");
+  const offYEl = document.getElementById("jobOffsetY");
+  const applyBtn = document.getElementById("applyJobTransform");
+  const resetBtn = document.getElementById("resetJobTransform");
+
+  if (!zoomEl || !offXEl || !offYEl || !applyBtn || !resetBtn) {
+    return; // UI not present (older HTML)
+  }
+
+  const syncFromInputs = () => {
+    jobTransformState.zoomPct = parseInt(zoomEl.value, 10) || 100;
+    jobTransformState.offX = parseFloat(offXEl.value) || 0;
+    jobTransformState.offY = parseFloat(offYEl.value) || 0;
+    updateJobTransformStatus();
+  };
+
+  zoomEl.addEventListener("input", () => { syncFromInputs(); });
+  offXEl.addEventListener("input", () => { syncFromInputs(); });
+  offYEl.addEventListener("input", () => { syncFromInputs(); });
+
+  applyBtn.addEventListener("click", async () => {
+    if (!jobTransformOriginalCommands) {
+      jobTransformOriginalCommands = uploadConvertedCommands || null;
+    }
+    if (!jobTransformOriginalCommands) return;
+
+    const transformed = applyTransformToCommandsText(
+      jobTransformOriginalCommands,
+      jobTransformState.zoomPct,
+      jobTransformState.offX,
+      jobTransformState.offY
+    );
+
+    uploadConvertedCommands = transformed;
+
+    // Rebuild preview from transformed commands (non-blocking)
+    try { await initJobPreviewFromCommands(uploadConvertedCommands); } catch (e) { console.warn(e); }
+  });
+
+  resetBtn.addEventListener("click", async () => {
+    jobTransformState.zoomPct = 100;
+    jobTransformState.offX = 0;
+    jobTransformState.offY = 0;
+
+    zoomEl.value = "100";
+    offXEl.value = "0";
+    offYEl.value = "0";
+    updateJobTransformStatus();
+
+    if (jobTransformOriginalCommands) {
+      uploadConvertedCommands = jobTransformOriginalCommands;
+      try { await initJobPreviewFromCommands(uploadConvertedCommands); } catch (e) { console.warn(e); }
+    }
+  });
+
+  updateJobTransformStatus();
+}
+
+function initJobTransformForCommands(commandsText) {
+  // Called whenever new commands are generated/imported.
+  jobTransformOriginalCommands = commandsText || null;
+
+  // keep current transform values, but refresh UI display
+  bindJobTransformUiOnce();
+  updateJobTransformStatus();
+}
 
 async function renderPlannedPreview() {
   if (!jobModel) return;
@@ -1507,14 +2156,14 @@ async function renderPlannedPreview() {
   const { w, h } = ensureCanvasSize(canvas);
   ensureCanvasSize(overlay);
 
-  const tr = computeTransformForCanvas(jobModel, w, h);
+  const tr = computeTransformForCanvasWithView(jobModel, w, h, 16, PREVIEW_VIEW);
 
   plannedPreviewCanvas = document.createElement("canvas");
   plannedPreviewCanvas.width = w;
   plannedPreviewCanvas.height = h;
 
   const pctx = plannedPreviewCanvas.getContext("2d");
-  drawBackground(pctx, w, h);
+  drawBackground(pctx, w, h, !!PREVIEW_VIEW.showGrid);
 
   await drawPlannedPath(pctx, jobModel, tr);
 
@@ -1538,7 +2187,7 @@ function updatePreviewOverlay() {
   const { w, h } = ensureCanvasSize(canvas);
   ensureCanvasSize(overlay);
 
-  const tr = computeTransformForCanvas(jobModel, w, h);
+  const tr = computeTransformForCanvasWithView(jobModel, w, h, 16, PREVIEW_VIEW);
   const octx = overlay.getContext("2d");
 
   const posMm = currentSimMmPosition(jobModel, { segIx: simSegIx, segProg: simSegProg });
@@ -1574,6 +2223,9 @@ function updatePreviewOverlay() {
     octx.fillText(`Bildgröße: ${wMm.toFixed(1)} × ${hMm.toFixed(1)} mm`, 16, 60);
     octx.restore();
   } catch {}
+
+  // Axis ticks/labels (X/Y)
+  try { drawAxes(octx, tr); } catch {}
 
   // Start marker
   const startSegIx = findSegmentIndexByDistance(jobModel, selectedStartDist);
@@ -1611,7 +2263,7 @@ async function startSim() {
 
   const canvas = document.getElementById("jobPreviewCanvas");
   const { w, h } = ensureCanvasSize(canvas);
-  const tr = computeTransformForCanvas(jobModel, w, h);
+  const tr = computeTransformForCanvasWithView(jobModel, w, h, 16, PREVIEW_VIEW);
 
   const ctx = canvas.getContext("2d");
 
@@ -1734,7 +2386,7 @@ async function setupLiveCanvasIfPossible() {
   plannedLiveCanvas.height = h;
 
   const pctx = plannedLiveCanvas.getContext("2d");
-  drawBackground(pctx, w, h);
+  drawBackground(pctx, w, h, true);
   await drawPlannedPath(pctx, jobModel, tr);
 
   const ctx = canvas.getContext("2d");
@@ -1872,7 +2524,7 @@ async function checkIfExtendedToHome(extendToHomeTime) {
 }
 
 
-// -------- Drawing Quality Presets (Saved with explicit button) --------
+// -------- Drawing Quality Presets (Live, no save button) --------
 const DRAW_QUALITY_PRESETS = [
   { name: "Super schnell", cfg: { lookaheadSegments: 32, junctionDeviation: 0.05, minSegmentTimeMs: 0, cornerSlowdown: 0.25, minCornerFactor: 0.35, minSegmentLenMM: 2.0, collinearDeg: 25.0, microSlowLenMM: 0.0, microMinFactor: 1.0, sCurveFactor: 0.0 } },
   { name: "Schnell",       cfg: { lookaheadSegments: 64, junctionDeviation: 0.08, minSegmentTimeMs: 0, cornerSlowdown: 0.35, minCornerFactor: 0.30, minSegmentLenMM: 1.0, collinearDeg: 20.0, microSlowLenMM: 4.0, microMinFactor: 0.55, sCurveFactor: 0.4 } },
@@ -1886,7 +2538,7 @@ async function applyDrawQualityPreset(ix) {
   const txt = document.getElementById("drawQualityPresetText");
   if (txt) txt.textContent = p.name;
 
-  // Apply (and persisted by firmware endpoint)
+  // Apply immediately (and persisted by firmware endpoint)
   try {
     const body = new URLSearchParams();
     for (const [k, v] of Object.entries(p.cfg)) body.set(k, String(v));
@@ -1904,38 +2556,358 @@ async function applyDrawQualityPreset(ix) {
 function initDrawQualityPresetUI() {
   const s = document.getElementById("drawQualityPreset");
   const t = document.getElementById("drawQualityPresetText");
-  const btnSave = document.getElementById("drawQualitySaveBtn");
   if (!s) return;
 
-  let pendingIx = Number.parseInt(s.value || "2", 10);
-
-  const setPending = (ix) => {
-    pendingIx = Math.max(0, Math.min(DRAW_QUALITY_PRESETS.length - 1, ix));
-    if (t) t.textContent = DRAW_QUALITY_PRESETS[pendingIx].name;
-    if (btnSave) btnSave.disabled = false;
-  };
-
-  const onSlider = () => {
+  const applyFromSlider = () => {
     const ix = Number.parseInt(s.value || "2", 10);
-    setPending(ix);
+    if (t) t.textContent = DRAW_QUALITY_PRESETS[Math.max(0, Math.min(4, ix))].name;
+    applyDrawQualityPreset(ix);
   };
 
-  s.addEventListener("input", onSlider);
-  s.addEventListener("change", onSlider);
+  s.addEventListener("input", applyFromSlider);
+  s.addEventListener("change", applyFromSlider);
 
-  if (btnSave) {
-    btnSave.addEventListener("click", async () => {
-      try {
-        btnSave.disabled = true;
-        await applyDrawQualityPreset(pendingIx);
-      } catch (e) {
-        btnSave.disabled = false;
+  // default
+  try { applyFromSlider(); } catch {}
+
+  // Save button: persist current planner values via the existing "Planner speichern" action
+  document.getElementById("drawQualitySaveBtn")?.addEventListener("click", () => {
+    // Open gear modal and trigger save for consistency
+    try {
+      const m = document.getElementById("toolsModal");
+      if (m) {
+        const bs = bootstrap?.Modal?.getOrCreateInstance(m);
+        bs?.show();
+        setTimeout(() => {
+          document.getElementById("plannerSaveBtn")?.click();
+        }, 150);
+      } else {
+        document.getElementById("plannerSaveBtn")?.click();
       }
-    });
-  }
+    } catch {
+      document.getElementById("plannerSaveBtn")?.click();
+    }
+  });
+}
 
-  // default label (no auto-apply)
-  try { setPending(pendingIx); if (btnSave) btnSave.disabled = true; } catch {}
+function initGotoModalUI() {
+  const goBtn = document.getElementById("gotoGoBtn");
+  const centerBtn = document.getElementById("gotoCenterBtn");
+  const baseBtn = document.getElementById("gotoBaseBtn2");
+  const xEl = document.getElementById("gotoX");
+  const yEl = document.getElementById("gotoY");
+  const st = document.getElementById("gotoStatus");
+
+  if (!goBtn || !xEl || !yEl) return;
+
+  const postJog = async (x, y) => {
+    if (st) st.textContent = "Sende…";
+    try {
+      const body = new URLSearchParams();
+      body.set("x", String(x));
+      body.set("y", String(y));
+      // Prefer /jogTo (works even if user did not pause, but still safety checks). Fallback to /parkTo.
+      let r = await fetch("/jogTo", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+      if (r.status === 404) {
+        r = await fetch("/parkTo", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+      }
+      const txt = await r.text();
+      if (st) st.textContent = r.ok ? `OK: ${x.toFixed(1)}/${y.toFixed(1)} mm` : `FEHLER (${r.status}): ${txt}`;
+    } catch (e) {
+      if (st) st.textContent = "FEHLER: " + (e?.message || e);
+    }
+  };
+
+  goBtn.addEventListener("click", async () => {
+    const x = Number.parseFloat(xEl.value) || 0;
+    const y = Number.parseFloat(yEl.value) || 0;
+    await postJog(x, y);
+  });
+
+  centerBtn?.addEventListener("click", () => {
+    const td = Number(currentState?.topDistance ?? 0);
+    const cx = (td > 0) ? (td / 2.0) : (Number.parseFloat(xEl.value) || 0);
+    xEl.value = String(cx.toFixed(1));
+  });
+
+  baseBtn?.addEventListener("click", async () => {
+    const td = Number(currentState?.topDistance ?? 0);
+    const cx = (td > 0) ? (td / 2.0) : (Number.parseFloat(xEl.value) || 0);
+    xEl.value = String(cx.toFixed(1));
+    yEl.value = "340";
+    await postJog(cx, 340.0);
+  });
+}
+
+function initTcpUi() {
+  const xEl = document.getElementById("tcpX");
+  const yEl = document.getElementById("tcpY");
+  const loadBtn = document.getElementById("tcpLoadBtn");
+  const saveBtn = document.getElementById("tcpSaveBtn");
+  const st = document.getElementById("tcpStatus");
+  const t0 = document.getElementById("tcpTestGoto0");
+  const tc = document.getElementById("tcpTestGotoCenter");
+  const tRep = document.getElementById("tcpTestPointRepeat");
+  const tCorners = document.getElementById("tcpTestFourCorners");
+  const tCircle = document.getElementById("tcpTestCircle");
+
+  if (!xEl || !yEl || !loadBtn || !saveBtn) return;
+
+  const load = async () => {
+    try {
+      const r = await fetch("/tcpOffset", { cache: "no-store" });
+      const j = await r.json();
+      xEl.value = String((Number(j.x) || 0).toFixed(2));
+      yEl.value = String((Number(j.y) || 0).toFixed(2));
+      if (st) st.textContent = "TCP geladen.";
+    } catch (e) {
+      if (st) st.textContent = "TCP laden fehlgeschlagen: " + (e?.message || e);
+    }
+  };
+
+  const save = async () => {
+    try {
+      const body = new URLSearchParams();
+      body.set("x", String(Number.parseFloat(xEl.value) || 0));
+      body.set("y", String(Number.parseFloat(yEl.value) || 0));
+      const r = await fetch("/tcpOffset", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+      const txt = await r.text();
+      if (st) st.textContent = r.ok ? "TCP gespeichert." : `FEHLER (${r.status}): ${txt}`;
+    } catch (e) {
+      if (st) st.textContent = "TCP speichern fehlgeschlagen: " + (e?.message || e);
+    }
+  };
+
+  loadBtn.addEventListener("click", load);
+  saveBtn.addEventListener("click", save);
+
+  t0?.addEventListener("click", async () => {
+    if (st) st.textContent = "Test: fahre zu 0/0…";
+    try {
+      const body = new URLSearchParams();
+      body.set("x", "0");
+      body.set("y", "0");
+      let r = await fetch("/jogTo", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+      if (r.status === 404) {
+        r = await fetch("/parkTo", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+      }
+      const txt = await r.text();
+      if (st) st.textContent = r.ok ? "OK" : `FEHLER (${r.status}): ${txt}`;
+    } catch (e) { if (st) st.textContent = "FEHLER: " + (e?.message || e); }
+  });
+
+  tc?.addEventListener("click", async () => {
+    const td = Number(currentState?.topDistance ?? 0);
+    const cx = (td > 0) ? (td / 2.0) : 0;
+    const cy = 340;
+    if (st) st.textContent = `Test: fahre zu ${cx.toFixed(1)}/${cy.toFixed(1)}…`;
+    try {
+      const body = new URLSearchParams();
+      body.set("x", String(cx));
+      body.set("y", String(cy));
+      let r = await fetch("/jogTo", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+      if (r.status === 404) {
+        r = await fetch("/parkTo", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+      }
+      const txt = await r.text();
+      if (st) st.textContent = r.ok ? "OK" : `FEHLER (${r.status}): ${txt}`;
+    } catch (e) { if (st) st.textContent = "FEHLER: " + (e?.message || e); }
+  });
+
+
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  const ensureSafe = async () => {
+    try {
+      const s = await (await fetch("/getState", { cache: "no-store" })).json();
+      // Block tests while drawing/running
+      const phase = String(s?.phase || "");
+      const isDrawing = (phase === "BeginDrawing" || phase === "CommandHandling" || phase === "Run" || phase === "Resume");
+      if (isDrawing) {
+        throw new Error("Job läuft oder Phase aktiv: " + phase);
+      }
+    } catch (e) {
+      // If we cannot verify, we still allow but show warning.
+      if (st) st.textContent = "WARNUNG: Safety-Check unsicher (" + (e?.message || e) + ")";
+    }
+  };
+
+  const jogTo = async (x, y) => {
+    const body = new URLSearchParams();
+    body.set("x", String(x));
+    body.set("y", String(y));
+    let r = await fetch("/jogTo", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+    if (r.status === 404) {
+      r = await fetch("/parkTo", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+    }
+    const txt = await r.text();
+    if (!r.ok) throw new Error(`Jog FEHLER (${r.status}): ${txt}`);
+  };
+
+  const penUp = async () => {
+    const up = Number(liveHud?.penUpAngle ?? 80);
+    await fetch("/setServo", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ angle: String(up) }) });
+  };
+
+  const penDown = async () => {
+    const down = Number(liveHud?.penDownAngle ?? 120);
+    await fetch("/setServo", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ angle: String(down) }) });
+  };
+
+  const tapPoint = async (holdMs = 200) => {
+    await penDown();
+    await sleep(Math.max(50, holdMs));
+    await penUp();
+  };
+
+  // ---- TCP test sequences ----
+
+  tRep?.addEventListener("click", async () => {
+    const td = Number(currentState?.topDistance ?? 0);
+    const cx = (td > 0) ? (td / 2.0) : 0;
+    const cy = 340;
+    if (st) st.textContent = "Punkt-Test: A→B→A…";
+    try {
+      await ensureSafe();
+      await penUp();
+      await jogTo(cx, cy);
+      await tapPoint(250);
+      await jogTo(cx + 60.0, cy + 60.0);
+      await sleep(150);
+      await jogTo(cx, cy);
+      await tapPoint(250);
+      if (st) st.textContent = "OK: Punkt-Test fertig. Vergleiche beide Punkte (müssen deckungsgleich sein).";
+    } catch (e) {
+      if (st) st.textContent = "FEHLER: " + (e?.message || e);
+    }
+  });
+
+  tCorners?.addEventListener("click", async () => {
+    const td = Number(currentState?.topDistance ?? 0);
+    const cx = (td > 0) ? (td / 2.0) : 0;
+    const cy = 340;
+    const half = 120.0; // 240mm box around center
+    const pts = [
+      { x: cx - half, y: cy - half },
+      { x: cx + half, y: cy - half },
+      { x: cx - half, y: cy + half },
+      { x: cx + half, y: cy + half },
+    ];
+    if (st) st.textContent = "4-Ecken-Test: setze 4 Punkte…";
+    try {
+      await ensureSafe();
+      await penUp();
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i];
+        await jogTo(p.x, p.y);
+        await tapPoint(200);
+        await sleep(150);
+      }
+      if (st) st.textContent = "OK: 4 Punkte gesetzt. Miss Δx/Δy je Ecke (gleich = TCP, verschieden = Verdrehung/Mechanik).";
+    } catch (e) {
+      if (st) st.textContent = "FEHLER: " + (e?.message || e);
+    }
+  });
+
+  tCircle?.addEventListener("click", async () => {
+    const td = Number(currentState?.topDistance ?? 0);
+    const cx = (td > 0) ? (td / 2.0) : 0;
+    const cy = 340;
+    const r = 100.0;
+    const n = 36;
+    if (st) st.textContent = "Kreis-Test: zeichne Kreis…";
+    try {
+      await ensureSafe();
+      await penUp();
+      // go to start point on circle
+      await jogTo(cx + r, cy);
+      await penDown();
+      for (let i = 1; i <= n; i++) {
+        const a = (i / n) * Math.PI * 2.0;
+        const x = cx + Math.cos(a) * r;
+        const y = cy + Math.sin(a) * r;
+        await jogTo(x, y);
+      }
+      await penUp();
+      if (st) st.textContent = "OK: Kreis fertig. Prüfe: rund oder Ei? (Ei = Verdrehung/Geometrie, nicht TCP).";
+    } catch (e) {
+      try { await penUp(); } catch {}
+      if (st) st.textContent = "FEHLER: " + (e?.message || e);
+    }
+  });
+
+  // initial
+  load().catch(()=>{});
+}
+
+function initDrawPenSpeedUi() {
+  const s = document.getElementById("drawPenSpeedMult");
+  const t = document.getElementById("drawPenSpeedMultText");
+  const saveBtn = document.getElementById("drawPenSpeedSaveBtn");
+  const resetBtn = document.getElementById("drawPenSpeedResetBtn");
+  const st = document.getElementById("drawPenSpeedStatus");
+  if (!s || !t || !saveBtn || !resetBtn) return;
+
+  let basePrint = null;
+  let baseMove = null;
+
+  const ensureBase = async () => {
+    const d = await loadDiagOnce();
+    // /diag returns printSpeedSteps + moveSpeedSteps
+    basePrint = Number(d?.printSpeedSteps);
+    baseMove  = Number(d?.moveSpeedSteps);
+    if (!Number.isFinite(basePrint) || basePrint <= 0) basePrint = 1200;
+    if (!Number.isFinite(baseMove) || baseMove <= 0) baseMove = 2000;
+  };
+
+  const setText = () => {
+    const v = Number.parseInt(s.value || "100", 10);
+    t.textContent = `${v}%`;
+  };
+
+  const postRuntime = async (multPct) => {
+    await ensureBase();
+    const ps = Math.max(1, Math.round(basePrint * (multPct / 100.0)));
+    const ms = Math.max(1, Math.round(baseMove));
+    const body = new URLSearchParams();
+    body.set("printSpeed", String(ps));
+    body.set("moveSpeed", String(ms));
+    const r = await fetch("/setSpeedsRuntime", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+    if (st) st.textContent = r.ok ? `Live: print ${ps} · move ${ms}` : `FEHLER (${r.status})`;
+  };
+
+  const postSave = async (multPct) => {
+    await ensureBase();
+    const ps = Math.max(1, Math.round(basePrint * (multPct / 100.0)));
+    const ms = Math.max(1, Math.round(baseMove));
+    const body = new URLSearchParams();
+    body.set("printSpeed", String(ps));
+    body.set("moveSpeed", String(ms));
+    const r = await fetch("/setSpeeds", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+    const txt = await r.text();
+    if (st) st.textContent = r.ok ? `Gespeichert: print ${ps} · move ${ms}` : `FEHLER (${r.status}): ${txt}`;
+  };
+
+  const throttledRuntime = $.throttle ? $.throttle(180, (mult) => postRuntime(mult).catch(()=>{})) : (mult) => postRuntime(mult).catch(()=>{});
+
+  s.addEventListener("input", () => {
+    setText();
+    const v = Number.parseInt(s.value || "100", 10);
+    throttledRuntime(v);
+  });
+
+  resetBtn.addEventListener("click", () => {
+    s.value = "100";
+    setText();
+    throttledRuntime(100);
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    const v = Number.parseInt(s.value || "100", 10);
+    await postSave(v);
+  });
+
+  setText();
 }
 
 
@@ -1946,6 +2918,9 @@ function init() {
   startPerfPoll();
   bindServoToolButtons();
   try { initDrawQualityPresetUI(); } catch {}
+  try { initDrawPenSpeedUi(); } catch {}
+  try { initGotoModalUI(); } catch {}
+  try { initTcpUi(); } catch {}
   document.addEventListener("DOMContentLoaded", () => {
     // ... deine init Sachen ...
     initPulseWidthSettingsUI();
@@ -2312,6 +3287,7 @@ $("#uploadSvg").off("change").on("change", async function () {
 	      $("#acceptSvg").removeAttr("disabled");
 	      // Commands Preview + Simulation
 	      try { initJobPreviewFromCommands(uploadConvertedCommands); } catch {}
+	      try { initJobTransformForCommands(uploadConvertedCommands); } catch {}
 
 	      // SVG-Serie: Startpunkt (Prozent) vom ersten SVG übernehmen
 	      try {
@@ -2748,6 +3724,7 @@ $("#uploadSvg").off("change").on("change", async function () {
         // Vorschau aktivieren
         try {
           initJobPreviewFromCommands(uploadConvertedCommands);
+          try { initJobTransformForCommands(uploadConvertedCommands); } catch {}
         } catch (e) {
           console.warn("JobPreview init failed", e);
         }
@@ -2860,14 +3837,11 @@ $("#uploadSvg").off("change").on("change", async function () {
     }
   });
 
-  // Spool controls: hold button for continuous scrubbing (UI-only, no robot move)
+  // Spool controls: hold button for continuous scrubbing (20×)
   function startSpool(dir) {
     if (!jobModel) return;
     window.__spoolActive = true;
-    const slider = document.getElementById("spoolSpeed");
-    const mult = Math.max(20, Math.min(100, Number(slider?.value || 20)));
-    // 20× -> 2000 mm/s, 100× -> 10000 mm/s
-    const rateMmS = mult * 100;
+    const rateMmS = 2000; // ~20× feel, UI-only
     let last = performance.now();
 
     const tick = (ts) => {
@@ -2906,21 +3880,6 @@ $("#uploadSvg").off("change").on("change", async function () {
 
   const backBtn = document.getElementById("spoolBackBtn");
   const fwdBtn  = document.getElementById("spoolFwdBtn");
-
-  // Spool speed slider (20×..100×)
-  const spoolSlider = document.getElementById("spoolSpeed");
-  const spoolTxt = document.getElementById("spoolSpeedText");
-  const updateSpoolUi = () => {
-    const v = Math.max(20, Math.min(100, Number(spoolSlider?.value || 20)));
-    if (spoolTxt) spoolTxt.textContent = `${v}×`;
-    if (backBtn) backBtn.textContent = `⏪ Zurück (${v}×)`;
-    if (fwdBtn)  fwdBtn.textContent  = `⏩ Vor (${v}×)`;
-  };
-  if (spoolSlider) {
-    spoolSlider.addEventListener("input", updateSpoolUi);
-    spoolSlider.addEventListener("change", updateSpoolUi);
-  }
-  try { updateSpoolUi(); } catch {}
 
   if (backBtn) {
     backBtn.addEventListener("mousedown", () => startSpool(-1));
@@ -3126,6 +4085,9 @@ $("#uploadSvg").off("change").on("change", async function () {
   startLogPolling();
   pollLogs(false);
   bindHelpModalDiagnostics();
+
+  // Job transform UI (scale + offset)
+  try { bindJobTransformUiOnce(); } catch {}
 }
 
 // ------- Rest deines Codes (WebLog, verifyUpload, adaptToState, telemetry, system, help, servo tools) -------
@@ -4711,7 +5673,7 @@ function initPulseWidthSettingsUI() {
     } catch {}
   }, true);
 
-  // ===== SVG overlay (mm text + ORG + axes) for preview IMG elements =====
+  // ===== SVG overlay (mm frame + ORG + axes) for preview IMG elements =====
   const overlayState = new Map();
 
   function ensureOverlay(img){
@@ -4759,10 +5721,17 @@ function initPulseWidthSettingsUI() {
     svg.setAttribute('viewBox', `0 0 ${r.width} ${r.height}`);
 
     while (svg.firstChild) svg.removeChild(svg.firstChild);
-
+    return; // disable blue overlay (frame + ORG/maxX/maxY text)
     const mk = (name) => document.createElementNS('http://www.w3.org/2000/svg', name);
-    // NOTE: User requested that blue frame must be removed.
-    // We keep only axes + text, no full-frame rectangle.
+    const rect = mk('rect');
+    rect.setAttribute('x', '1');
+    rect.setAttribute('y', '1');
+    rect.setAttribute('width', (r.width-2).toString());
+    rect.setAttribute('height', (r.height-2).toString());
+    rect.setAttribute('fill', 'none');
+    rect.setAttribute('stroke', '#2f81ff');
+    rect.setAttribute('stroke-width', '2');
+    svg.appendChild(rect);
 
     let ox = 0, oy = 0;
     if (st.meta.hasViewBox && st.meta.vbW > 0 && st.meta.vbH > 0) {
@@ -4811,7 +5780,7 @@ function initPulseWidthSettingsUI() {
     const text = mk('text');
     text.setAttribute('x', '8');
     text.setAttribute('y', '20');
-    text.setAttribute('fill', 'rgba(255,255,255,0.90)');
+    text.setAttribute('fill', '#2f81ff');
     text.setAttribute('font-size', '14');
     text.setAttribute('font-family', 'system-ui, -apple-system, Segoe UI, Roboto, Arial');
     const maxX = (st.meta.widthMm || 0).toFixed(1);

@@ -332,6 +332,7 @@ Plotters fail in the same predictable ways:
 - segment noise creates jitter  
 - the stepper backend gets flooded with micro-moves  
 
+
 This project exists to fix that with:
 - lookahead planning  
 - junction-aware corner control  
@@ -348,3 +349,5 @@ pio run -t uploadfs
 -------------------------------------------------
 pio device monitor -b 115200
 pio device monitor -p COM4 -b 115200
+
+

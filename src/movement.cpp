@@ -26,11 +26,13 @@ Movement::Movement(Display* display) {
     rightMotor->setAcceleration((float)accelerationSteps);
     rightMotor->setMinPulseWidth(_rightPulseWidthUs); // no-op on FastAccelStepper, kept for API compatibility
     rightMotor->disableOutputs();
-
     topDistance = -1;
     moving = false;
     homed = false;
     startedHoming = false;
+
+    tcpOffsetXmm = 0.0;
+    tcpOffsetYmm = -30.0; 
 }
 
 void Movement::setPlannerConfig(const PlannerConfig& cfg) {
@@ -147,7 +149,8 @@ Movement::Point Movement::getHomeCoordinates() {
     if (topDistance == -1) {
         return Point(0, 0);
     }
-    return Point(width / 2.0, HOME_Y_OFFSET_MM);
+    // Public API returns pen-tip coordinates.
+    return Point((width / 2.0) + tcpOffsetXmm, (double)HOME_Y_OFFSET_MM + tcpOffsetYmm);
 }
 
 int Movement::extendToHome() {
@@ -303,14 +306,10 @@ double Movement::computeCornerFactor(double dx, double dy) const {
 float Movement::beginLinearTravel(double x, double y, int speed) {
     if (topDistance == -1 || !homed) throw std::invalid_argument("not ready");
 
-    // NOTE (safety vs usability):
-    // Previously we threw on invalid x/y and the whole job would appear to "stop" when a single point
-    // was slightly outside the width (often due to rounding / offsets). That is a terrible UX.
-    // New behavior: clamp into valid workspace, log a warning (rate-limited), and keep going.
     if (speed <= 0) speed = 1;
 
-    double tx = x;
-    double ty = y;
+    double tx = x - tcpOffsetXmm;
+    double ty = y - tcpOffsetYmm;
 
     const double clampedX = std::max(0.0, std::min(width, tx));
     const double clampedY = (ty < 0.0) ? 0.0 : ty;
@@ -411,8 +410,12 @@ int Movement::estimateMaxDeltaSteps(double x, double y, int* outDeltaLeft, int* 
     if (topDistance == -1 || !homed) throw std::invalid_argument("not ready");
 
     // Keep planner estimates consistent and non-fatal: clamp instead of throwing.
-    const double tx = std::max(0.0, std::min(width, x));
-    const double ty = (y < 0.0) ? 0.0 : y;
+    // Convert pen-tip coordinates to carriage coordinates.
+    const double cx = x - tcpOffsetXmm;
+    const double cy = y - tcpOffsetYmm;
+
+    const double tx = std::max(0.0, std::min(width, cx));
+    const double ty = (cy < 0.0) ? 0.0 : cy;
 
 
     const auto lengths = getBeltLengths(tx, ty);
@@ -436,12 +439,32 @@ double Movement::getWidth() {
 Movement::Point Movement::getCoordinates() {
     if (X == -1 || Y == -1) throw std::invalid_argument("not ready");
     if (moving) throw std::invalid_argument("not ready");
-    return Point(X, Y);
+    // Report pen-tip coordinates
+    return Point(X + tcpOffsetXmm, Y + tcpOffsetYmm);
 }
 
 Movement::Point Movement::getCoordinatesLive() {
     if (X == -1 || Y == -1) return Point(0, 0);
-    return Point(X, Y);
+    // Report pen-tip coordinates
+    return Point(X + tcpOffsetXmm, Y + tcpOffsetYmm);
+}
+
+void Movement::setTcpOffset(double tcpXmm, double tcpYmm) {
+    // Keep sane bounds (prevent ridiculous values)
+    if (!isfinite(tcpXmm)) tcpXmm = 0.0;
+    if (!isfinite(tcpYmm)) tcpYmm = 0.0;
+    if (tcpXmm < -200.0) tcpXmm = -200.0;
+    if (tcpXmm >  200.0) tcpXmm =  200.0;
+    if (tcpYmm < -200.0) tcpYmm = -200.0;
+    if (tcpYmm >  200.0) tcpYmm =  200.0;
+
+    tcpOffsetXmm = tcpXmm;
+    tcpOffsetYmm = tcpYmm;
+}
+
+void Movement::getTcpOffset(double& outTcpXmm, double& outTcpYmm) const {
+    outTcpXmm = tcpOffsetXmm;
+    outTcpYmm = tcpOffsetYmm;
 }
 
 void Movement::setSpeeds(int newPrintSpeed, int newMoveSpeed) {

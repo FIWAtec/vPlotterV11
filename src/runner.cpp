@@ -318,6 +318,7 @@ bool Runner::fillLookaheadQueue() {
     return !lookaheadQ.empty();
 }
 
+
 void Runner::optimizeLookaheadQueue() {
     const auto cfg = movement->getPlannerConfig();
 
@@ -333,6 +334,59 @@ void Runner::optimizeLookaheadQueue() {
             prev = it->p;
         }
         ++it;
+    }
+
+    // ------------------------------------------------------------------
+    // NEW: Reduce pen up/down churn safely (no geometry change):
+    // - Buffer pen state changes and only emit them right before the next real MOVE.
+    // - Drop zero-length moves.
+    // - Drop pen toggles that are never followed by a move.
+    // ------------------------------------------------------------------
+    {
+        std::deque<QueuedCommand> out;
+        Movement::Point cur = startPosition;
+
+        bool penDown = false;          // assume start is UP
+        bool pending = false;
+        bool pendingState = false;
+
+        auto flushPendingIfNeeded = [&]() {
+            if (pending) {
+                out.emplace_back(pendingState); // Pen command
+                penDown = pendingState;
+                pending = false;
+            }
+        };
+
+        const double eps = 1e-6;
+
+        for (const auto &cmd : lookaheadQ) {
+            if (cmd.type == QueuedCommand::Pen) {
+                // ignore redundant state
+                if (cmd.penDown == penDown) continue;
+
+                // buffer state change (overwrite if multiple toggles happen without a move)
+                pending = true;
+                pendingState = cmd.penDown;
+                continue;
+            }
+
+            // Move
+            const double d = Movement::distanceBetweenPoints(cur, cmd.p);
+            if (d < eps) {
+                // no-op move => drop
+                continue;
+            }
+
+            // there is a real move: apply pending pen state right before it
+            flushPendingIfNeeded();
+
+            out.push_back(cmd);
+            cur = cmd.p;
+        }
+
+        // If pending is still set here, it means a pen change at end without movement -> drop it.
+        lookaheadQ.swap(out);
     }
 
     // Merge collinear points for consecutive Move-Move-Move blocks between pen commands
@@ -351,10 +405,12 @@ void Runner::optimizeLookaheadQueue() {
             if (lookaheadQ[i].protect || lookaheadQ[i+1].protect || lookaheadQ[i+2].protect) continue;
 
             const auto &a = anchor;
-            const auto &b = lookaheadQ[i+1].p;
-            const auto &c = lookaheadQ[i+2].p;
+            const auto &b = lookaheadQ[i].p;
+            const auto &c = lookaheadQ[i+1].p;
+            const auto &d = lookaheadQ[i+2].p;
+
             const double ang = angleDegBetween(a, b, c);
-            if (ang <= cfg.collinearDeg || fabs(180.0 - ang) <= cfg.collinearDeg) {
+            if (fabs(ang) <= cfg.collinearDeg || fabs(180.0 - ang) <= cfg.collinearDeg) {
                 lookaheadQ.erase(lookaheadQ.begin() + (long)(i+1));
                 changed = true;
                 break;
@@ -362,6 +418,8 @@ void Runner::optimizeLookaheadQueue() {
         }
     }
 }
+
+
 
 Task *Runner::getNextTask() {
     if (prefaceIx < prefaceCount) {

@@ -14,7 +14,22 @@
     timing: { startedAt: null, lastRunTs: null, accumSec: 0 },
     geom: { bbox: null, heightMm: null },
     warn: { message: "" },
-    last: { progress: null, running: false }
+    last: {
+      progress: null,
+      running: false,
+      x: 0,
+      y: 0,
+      distSofarMm: null,
+      distTotalMm: null,
+      distDrawMm: null,
+      distTravelMm: null,
+      curSpeedMmS: null,
+      printSteps: null,
+      accelSteps: null,
+      segApprox: null,
+      _lastDistForSpeed: null,
+      _lastSpeedTs: null
+    }
   };
 
   let els = null;
@@ -88,24 +103,30 @@
 
         <div class="mt-2" style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
           <div>
-            <div class="small text-muted">Zeit</div>
-            <div class="fw-semibold"><span id="dsElapsed">—</span> <span class="text-muted">/ ETA</span> <span id="dsEta">—</span></div>
+            <div class="small text-muted">Geschwindigkeit (aktuell / Ø)</div>
+            <div class="fw-semibold"><span id="dsCurSpeed">—</span> <span class="text-muted">/</span> <span id="dsSpeed">—</span></div>
           </div>
           <div>
-            <div class="small text-muted">Ø Geschwindigkeit</div>
-            <div class="fw-semibold" id="dsSpeed">—</div>
+            <div class="small text-muted">Fortschritt</div>
+            <div class="fw-semibold"><span id="dsProgress">—</span> <span class="text-muted">·</span> <span id="dsSeg">—</span></div>
           </div>
+
           <div>
-            <div class="small text-muted">Strecke gesamt</div>
-            <div class="fw-semibold" id="dsTotal">—</div>
-          </div>
-          <div>
-            <div class="small text-muted">Gemalt / Rest</div>
+            <div class="small text-muted">Strecke (sofar / rest)</div>
             <div class="fw-semibold"><span id="dsDone">—</span> <span class="text-muted">/</span> <span id="dsLeft">—</span></div>
           </div>
           <div>
-            <div class="small text-muted">Stift unten / Stift oben</div>
-            <div class="fw-semibold"><span id="dsDraw">—</span> <span class="text-muted">/</span> <span id="dsTravel">—</span></div>
+            <div class="small text-muted">Position (X/Y)</div>
+            <div class="fw-semibold" id="dsXY">—</div>
+          </div>
+
+          <div>
+            <div class="small text-muted">Pen-Speed</div>
+            <div class="fw-semibold" id="dsPenSpeed">—</div>
+          </div>
+          <div>
+            <div class="small text-muted">Beschleunigung</div>
+            <div class="fw-semibold" id="dsAccel">—</div>
           </div>
 
           <div style="grid-column: 1 / span 2;">
@@ -130,12 +151,15 @@
       name: card.querySelector("#dsName"),
       elapsed: card.querySelector("#dsElapsed"),
       eta: card.querySelector("#dsEta"),
+      curSpeed: card.querySelector("#dsCurSpeed"),
+      progress: card.querySelector("#dsProgress"),
+      seg: card.querySelector("#dsSeg"),
       speed: card.querySelector("#dsSpeed"),
-      total: card.querySelector("#dsTotal"),
       done: card.querySelector("#dsDone"),
       left: card.querySelector("#dsLeft"),
-      draw: card.querySelector("#dsDraw"),
-      travel: card.querySelector("#dsTravel"),
+      xy: card.querySelector("#dsXY"),
+      penSpeed: card.querySelector("#dsPenSpeed"),
+      accel: card.querySelector("#dsAccel"),
       dims: card.querySelector("#dsDims"),
       warnWrap: card.querySelector("#dsWarnWrap"),
       warn: card.querySelector("#dsWarn")
@@ -143,9 +167,28 @@
     return els;
   }
 
+  async function loadDiagOnce() {
+    if (loadDiagOnce._done) return loadDiagOnce._diag;
+    loadDiagOnce._done = true;
+    try {
+      const r = await fetch("/diag", { cache: "no-store" });
+      if (!r.ok) return null;
+      const j = await r.json();
+      loadDiagOnce._diag = j;
+      state.last.printSteps = Number(j?.printSpeedSteps);
+      state.last.accelSteps = Number(j?.acceleration);
+      return j;
+    } catch {
+      return null;
+    }
+  }
+
   function update() {
     const ui = ensureUi();
     if (!ui) return;
+
+    // non-blocking: try to read diag once, so we can show accel/pen-speed baselines
+    loadDiagOnce().catch(()=>{});
 
     const isBatch = !!state.batch.active;
     const modeTxt = isBatch ? `SVG-SERIE (${state.batch.index + 1}/${state.batch.total})` : "NORMAL";
@@ -158,42 +201,47 @@
     const total = Number(state.job.totalDistanceMm);
     const startDist = Number(state.job.startDistMm) || 0;
 
-    if (!Number.isFinite(total) || total <= 0) {
-      ui.total.textContent = "—";
-      ui.done.textContent = "—";
-      ui.left.textContent = "—";
-    } else {
+    // Progress + distances: prefer firmware sofar/total if available, else fallback to %
+    const prog = Number(state.last.progress);
+    const p = Number.isFinite(prog) ? Math.max(0, Math.min(100, prog)) : 0;
+    ui.progress.textContent = `${p.toFixed(0)}%`;
+
+    const approxSeg = Number.isFinite(state.geom?.lineCount)
+      ? Math.max(0, Math.min(state.geom.lineCount, Math.round((p / 100) * state.geom.lineCount)))
+      : null;
+    ui.seg.textContent = (approxSeg !== null) ? `Seg ${approxSeg}` : "Seg —";
+
+    // Prefer firmware distance when present
+    const sofar = Number(state.last.distSofarMm);
+    const totalFw = Number(state.last.distTotalMm);
+    let leftMm = null;
+    let doneMm = null;
+
+    if (Number.isFinite(sofar) && Number.isFinite(totalFw) && totalFw > 0) {
+      doneMm = Math.max(0, sofar - startDist);
+      leftMm = Math.max(0, totalFw - sofar);
+    } else if (Number.isFinite(total) && total > 0) {
       const range = Math.max(0, total - startDist);
-      const progress = Number(state.last.progress);
-      const p = Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : 0;
-
-      const done = (p / 100) * range;
-      const left = Math.max(0, range - done);
-
-      ui.total.textContent = fmtDist(range);
-      ui.done.textContent = fmtDist(done);
-      ui.left.textContent = fmtDist(left);
-
-      // Zeit / Speed / ETA
-      if (state.timing.startedAt) {
-        const elapsedSec = Math.max(1, state.timing.accumSec || 0);
-        ui.elapsed.textContent = fmtTime(elapsedSec);
-
-        const teleAvg = Number(state.last.avg_speed_mms);
-        const avg = Number.isFinite(teleAvg) && teleAvg > 0 ? teleAvg : (done / elapsedSec); // mm/s
-        ui.speed.textContent = fmtSpeed(avg);
-
-        if (avg > 0.0001) {
-          ui.eta.textContent = fmtTime(left / avg);
-        } else {
-          ui.eta.textContent = "—";
-        }
-      } else {
-        ui.elapsed.textContent = "—";
-        ui.speed.textContent = "—";
-        ui.eta.textContent = "—";
-      }
+      doneMm = (p / 100) * range;
+      leftMm = Math.max(0, range - doneMm);
     }
+
+    ui.done.textContent = (doneMm !== null) ? fmtDist(doneMm) : "—";
+    ui.left.textContent = (leftMm !== null) ? fmtDist(leftMm) : "—";
+
+    // Current speed (from distance delta)
+    ui.curSpeed.textContent = fmtSpeed(state.last.curSpeedMmS);
+
+    // Avg speed
+    const teleAvg = Number(state.last.avg_speed_mms);
+    ui.speed.textContent = fmtSpeed(teleAvg);
+
+    // XY
+    ui.xy.textContent = `X ${Number(state.last.x || 0).toFixed(1)}  ·  Y ${Number(state.last.y || 0).toFixed(1)} mm`;
+
+    // Pen speed + accel
+    ui.penSpeed.textContent = Number.isFinite(state.last.printSteps) ? `${Math.round(state.last.printSteps)} steps/s` : "—";
+    ui.accel.textContent = Number.isFinite(state.last.accelSteps) ? `${Math.round(state.last.accelSteps)} (steps/s²)` : "—";
 
     // Ausmaße aus Commands (bbox)
     try {
@@ -249,6 +297,7 @@
     if (Number.isFinite(total) && total > 0) state.job.totalDistanceMm = total;
     if (d.bbox) state.geom.bbox = d.bbox;
     if (Number.isFinite(Number(d.heightMm))) state.geom.heightMm = Number(d.heightMm);
+    if (Number.isFinite(Number(d.lineCount))) state.geom.lineCount = Number(d.lineCount);
     update();
   });
 
@@ -278,10 +327,35 @@
   window.addEventListener("mural:telemetry", (e) => {
     const d = e?.detail || {};
     state.last.progress = d.progress;
+    state.last.x = Number(d.x || 0);
+    state.last.y = Number(d.y || 0);
+
+    state.last.distSofarMm = Number(d.dist_sofar_mm);
+    state.last.distTotalMm = Number(d.dist_total_mm);
+    state.last.distDrawMm = Number(d.dist_draw_mm);
+    state.last.distTravelMm = Number(d.dist_travel_mm);
+    state.last.printSteps = Number(d.printSteps);
+    state.last.avg_speed_mms = Number(d.avg_speed_mms);
 
     const now = Date.now();
     const running = !!d.running && !d.paused;
     state.last.running = running;
+
+    // Current speed estimate from distance delta (firmware distance), only while running
+    try {
+      const distNow = Number(d.dist_sofar_mm);
+      if (running && Number.isFinite(distNow)) {
+        const lastDist = state.last._lastDistForSpeed;
+        const lastTs = state.last._lastSpeedTs;
+        if (Number.isFinite(lastDist) && Number.isFinite(lastTs)) {
+          const dt = Math.max(0.05, (now - lastTs) / 1000);
+          const dv = distNow - lastDist;
+          state.last.curSpeedMmS = Math.max(0, dv / dt);
+        }
+        state.last._lastDistForSpeed = distNow;
+        state.last._lastSpeedTs = now;
+      }
+    } catch {}
 
     if (state.timing.startedAt && running) {
       if (!state.timing.lastRunTs) state.timing.lastRunTs = now;

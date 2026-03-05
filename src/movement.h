@@ -26,8 +26,10 @@ static inline double stepsToMM(int steps) { return (double(steps) / double(steps
 
 constexpr double midPulleyToWall = 41.0;
 constexpr float homedStepOffsetMM = 20.0;
-
 static inline int homedStepsOffsetSteps() { return mmToSteps(homedStepOffsetMM); }
+
+constexpr double DEFAULT_TCP_OFFSET_X_MM = 0.0;
+constexpr double DEFAULT_TCP_OFFSET_Y_MM = -30.0; 
 
 constexpr double mass_bot = 1.5;
 constexpr double g_constant = 9.81;
@@ -126,6 +128,13 @@ class Movement {
     Point getCoordinatesLive();
     Point getCoordinates();
 
+    // TCP (Tool Center Point) offset in mm.
+    // The firmware uses XY coordinates as "pen tip" coordinates.
+    // Internally the kinematics may use a carriage reference; the TCP offset
+    // corrects this so that commanded points match the real drawn point.
+    void setTcpOffset(double tcpXmm, double tcpYmm);
+    void getTcpOffset(double& outTcpXmm, double& outTcpYmm) const;
+
     void setTopDistance(int distance);
     void resumeTopDistance(int distance);
     int getTopDistance();
@@ -178,6 +187,10 @@ class Movement {
 
     double X = -1;
     double Y = -1;
+
+    // TCP offset (mm). Applied to commanded positions and reported coordinates.
+    double tcpOffsetXmm = 0.0;
+    double tcpOffsetYmm = 0.0;
 
     // for cornering/backlash
     double lastSegmentDX = 0.0;

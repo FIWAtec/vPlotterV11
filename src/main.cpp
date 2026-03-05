@@ -83,6 +83,10 @@ constexpr const char* PREF_KEY_MICRO_LEN  = "microlen";
 constexpr const char* PREF_KEY_MICRO_MINF = "microminf";
 constexpr const char* PREF_KEY_PEN_SETTLE = "pensettle";
 
+// TCP (Tool Center Point) offset (pen tip) in mm.
+constexpr const char* PREF_KEY_TCP_X      = "tcpx";
+constexpr const char* PREF_KEY_TCP_Y      = "tcpy";
+
 // Perf stats
 struct PerfStats {
   uint32_t loop_us = 0;
@@ -392,6 +396,11 @@ static void registerDiagnosticsEndpoints(AsyncWebServer* server)
 
     doc["printSpeedSteps"] = printSpeedSteps;
     doc["moveSpeedSteps"]  = moveSpeedSteps;
+
+    double tcpx = 0.0, tcpy = 0.0;
+    if (movement) movement->getTcpOffset(tcpx, tcpy);
+    doc["tcpOffsetXmm"] = tcpx;
+    doc["tcpOffsetYmm"] = tcpy;
 
     doc["pulseLeftUs"]  = movement ? movement->getLeftPulseWidthUs()  : 0;
     doc["pulseRightUs"] = movement ? movement->getRightPulseWidthUs() : 0;
@@ -1014,6 +1023,12 @@ void setup()
   long storedAccel    = prefs.getLong("accel",    999999999L);
   movement->setMotionTuning(storedInfSteps, storedAccel);
 
+  // TCP offset (pen tip) in mm
+  const double storedTcpX = prefs.getDouble(PREF_KEY_TCP_X, 0.0);
+  const double storedTcpY = prefs.getDouble(PREF_KEY_TCP_Y, 0.0);
+  if (movement) movement->setTcpOffset(storedTcpX, storedTcpY);
+  WebLog::log(LOG_INFO, "Loaded TCP offset: x=" + String(storedTcpX, 3) + " y=" + String(storedTcpY, 3));
+
   WebLog::log(LOG_INFO, "Loaded tuning: infSteps=" + String(storedInfSteps) + " accel=" + String(storedAccel));
   WebLog::log(LOG_INFO, "Loaded speeds: print=" + String(storedPrint) + " move=" + String(storedMove));
 
@@ -1203,6 +1218,86 @@ void setup()
   registerDriverEnableEndpoints(&server);
   registerPulseWidthEndpoints(&server);
 
+  // TCP offset (pen tip) calibration
+  server.on("/tcpOffset", HTTP_GET, [](AsyncWebServerRequest* request){
+    double x = 0.0, y = 0.0;
+    if (movement) movement->getTcpOffset(x, y);
+    StaticJsonDocument<128> doc;
+    doc["x"] = x;
+    doc["y"] = y;
+    String out; serializeJson(doc, out);
+    request->send(200, "application/json; charset=utf-8", out);
+  });
+
+  server.on("/tcpOffset", HTTP_POST, [](AsyncWebServerRequest* request){
+    if (!movement) { request->send(503, "text/plain", "Not ready"); return; }
+    if (!request->hasParam("x", true) || !request->hasParam("y", true)) {
+      request->send(400, "text/plain", "Missing parameters");
+      return;
+    }
+
+    const double x = request->getParam("x", true)->value().toDouble();
+    const double y = request->getParam("y", true)->value().toDouble();
+
+    movement->setTcpOffset(x, y);
+    prefs.putDouble(PREF_KEY_TCP_X, x);
+    prefs.putDouble(PREF_KEY_TCP_Y, y);
+
+    WebLog::info(String("TCP offset saved: x=") + String(x, 3) + " y=" + String(y, 3));
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Park / jog to an absolute XY point (requires PAUSE)
+  server.on("/parkTo", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (!runner) { request->send(503, "text/plain", "Not ready"); return; }
+    if (!request->hasParam("x", true) || !request->hasParam("y", true)) {
+      request->send(400, "text/plain", "Missing parameters");
+      return;
+    }
+
+    const double x = request->getParam("x", true)->value().toDouble();
+    const double y = request->getParam("y", true)->value().toDouble();
+
+    const bool ok = runner->requestParkTo(x, y);
+    request->send(ok ? 200 : 409, "text/plain", ok ? "OK" : "Pause required / Busy");
+  });
+
+  // Non-blocking "jog" to an absolute XY. Extension endpoint (does not replace /parkTo).
+  // Safety rules:
+  // - Reject while job is actively running (unless paused)
+  // - Reject while motors are already moving
+  // - Uses current moveSpeedSteps
+  server.on("/jogTo", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (!movement) {
+      request->send(503, "text/plain", "Movement not ready");
+      return;
+    }
+
+    if (!request->hasParam("x", true) || !request->hasParam("y", true)) {
+      request->send(400, "text/plain", "Missing x/y");
+      return;
+    }
+
+    const double x = request->getParam("x", true)->value().toDouble();
+    const double y = request->getParam("y", true)->value().toDouble();
+
+    // If runner exists and is currently running (not paused), refuse.
+    if (runner && !runner->isStopped() && !runner->isPaused()) {
+      request->send(409, "text/plain", "Job running");
+      return;
+    }
+
+    // If movement is currently moving, refuse.
+    if (movement->isMoving()) {
+      request->send(409, "text/plain", "Busy");
+      return;
+    }
+
+    (void)movement->beginLinearTravel(x, y, moveSpeedSteps);
+    WebLog::info(String("JogTo: x=") + x + " y=" + y);
+    request->send(200, "text/plain", "OK");
+  });
+
   server.on("/setSpeeds", HTTP_POST, [](AsyncWebServerRequest *request){
     if (!request->hasParam("printSpeed", true) || !request->hasParam("moveSpeed", true)) {
       request->send(400, "text/plain", "Missing parameters");
@@ -1223,6 +1318,26 @@ void setup()
     prefs.putInt("moveSpeed", moveSpeed);
 
     WebLog::info(String("Speeds updated & saved: print=") + printSpeed + " move=" + moveSpeed);
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Runtime-only speeds (does NOT persist). Used for the "during drawing" slider.
+  server.on("/setSpeedsRuntime", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (!request->hasParam("printSpeed", true) || !request->hasParam("moveSpeed", true)) {
+      request->send(400, "text/plain", "Missing parameters");
+      return;
+    }
+
+    int printSpeed = request->getParam("printSpeed", true)->value().toInt();
+    int moveSpeed  = request->getParam("moveSpeed", true)->value().toInt();
+
+    if (printSpeed <= 0 || moveSpeed <= 0) {
+      request->send(400, "text/plain", "Invalid values");
+      return;
+    }
+
+    if (movement) movement->setSpeeds(printSpeed, moveSpeed);
+    WebLog::info(String("Speeds runtime: print=") + printSpeed + " move=" + moveSpeed);
     request->send(200, "text/plain", "OK");
   });
 
