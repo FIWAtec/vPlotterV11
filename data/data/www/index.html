@@ -351,6 +351,17 @@
             <button class="btn btn-outline-warning" id="spoolFwdBtn" type="button">⏩ Vor (20×)</button>
           </div>
           <div class="small text-muted mt-2" id="spoolInfo">—</div>
+
+          <hr class="my-3"/>
+          <div class="d-flex flex-wrap gap-2 align-items-end">
+            <div>
+              <label class="form-label mb-1" for="penMergeMmInput">Pen-Merge (mm)</label>
+              <input class="form-control" style="width:140px" id="penMergeMmInput" type="number" min="0" max="20" step="0.1" value="2.0">
+            </div>
+            <button class="btn btn-primary" id="penMergeApplyBtn" type="button">Anwenden & von vorn starten</button>
+            <div class="small text-muted" id="penMergeResult" style="min-width:240px">—</div>
+          </div>
+          <div class="small text-muted mt-2">Stiftbewegungen: <span id="penMovesText">—</span></div>
         </div>
 
         <button class="btn btn-danger" id="stopBtn" type="button">Malen beenden</button>
@@ -1519,88 +1530,59 @@
     </div>
   </div>
 
-<!-- Pen-Merge + Pen-Move HUD injection (v14) -->
-<script>
+
+<script type="module">
 (function(){
-  function el(id){ return document.getElementById(id); }
-
-  function inject(){
-    if (el('penMergeMmInput')) return;
-
-    // Try find pause panel; fallback to body bottom-right.
-    var host = document.querySelector('[data-panel="pause"]') || document.querySelector('#pausePanel') || document.body;
-
-    var wrap = document.createElement('div');
-    wrap.id = 'penMergeBox';
-    wrap.style.cssText = 'position:relative; padding:10px; margin:8px 0; border:1px solid rgba(255,255,255,0.12); border-radius:10px; background:rgba(0,0,0,0.25); max-width:360px;';
-
-    wrap.innerHTML = `
-      <div style="font-weight:600; margin-bottom:6px;">Pen-Lift Optimierung (mm)</div>
-      <div style="display:flex; gap:8px; align-items:center;">
-        <input id="penMergeMmInput" type="number" step="0.1" min="0" max="20" value="2.0"
-               style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.18); background:rgba(0,0,0,0.35); color:#fff;">
-        <button id="penMergeApplyBtn"
-                style="padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.18); background:rgba(255,255,255,0.10); color:#fff; cursor:pointer;">
-          Anwenden
-        </button>
-      </div>
-      <div id="penMergeResult" style="margin-top:6px; opacity:0.9; font-size:12px;"></div>
-      <div style="margin-top:10px; font-weight:600;">Stiftbewegungen</div>
-      <div id="penMovesHud" style="font-size:12px; opacity:0.9;">—</div>
-    `;
-
-    host.appendChild(wrap);
-
-    el('penMergeApplyBtn').addEventListener('click', async function(){
-      var mm = parseFloat(el('penMergeMmInput').value || '0');
-      if (!isFinite(mm) || mm < 0) mm = 0;
-      if (mm > 20) mm = 20;
-
-      el('penMergeResult').textContent = 'Optimierung läuft…';
-      try{
-        var r = await fetch('/optimizePenLifts', {
-          method:'POST',
-          headers:{'Content-Type':'application/x-www-form-urlencoded'},
-          body:'mm=' + encodeURIComponent(mm)
-        });
-        var t = await r.text();
-        if(!r.ok){
-          el('penMergeResult').textContent = 'Fehler: ' + r.status + ' ' + t;
-          return;
-        }
-        var j = {};
-        try{ j = JSON.parse(t); }catch(e){}
-        el('penMergeResult').textContent = 'OK: removedCycles=' + (j.removedCycles ?? '?') + ', removedPenLines=' + (j.removedPenLines ?? '?') + ', penCmds ' + (j.inPenLines ?? '?') + '→' + (j.outPenLines ?? '?') + ' (Up/Down gesamt). Commands ersetzt. Jetzt mit „Begin malen“ starten.';
-      }catch(e){
-        el('penMergeResult').textContent = 'Fehler: ' + (e && e.message ? e.message : e);
-      }
-    });
-  }
+  const $ = (id)=>document.getElementById(id);
+  const btn = $("penMergeApplyBtn");
+  const inp = $("penMergeMmInput");
+  const res = $("penMergeResult");
+  const moves = $("penMovesText");
 
   async function poll(){
     try{
-      var r = await fetch('/status');
+      const r = await fetch('/status',{cache:'no-store'});
       if(!r.ok) return;
-      var j = await r.json();
-      var pen = (j && j.pen) ? j.pen : {};
-      var hud = el('penMovesHud');
-      if(hud){
-        hud.textContent = 'Total: ' + (pen.movesTotal ?? 0) + ' | Up: ' + (pen.movesUp ?? 0) + ' | Down: ' + (pen.movesDown ?? 0);
+      const j = await r.json();
+      if(j && j.pen){
+        const t = j.pen.movesTotal ?? 0;
+        const up = j.pen.movesUp ?? 0;
+        const dn = j.pen.movesDown ?? 0;
+        if(moves) moves.textContent = `${t} gesamt (↓ ${dn} / ↑ ${up})`;
       }
     }catch(e){}
   }
 
-  // Try inject repeatedly (UI may render later)
-  var tries=0;
-  var iv=setInterval(function(){
-    inject();
-    tries++;
-    if(tries>40) clearInterval(iv);
-  }, 250);
+  if(btn){
+    btn.addEventListener('click', async ()=>{
+      const mm = parseFloat(inp?.value||'0');
+      res.textContent = 'optimieren…';
+      try{
+        const r = await fetch('/optimizePenLifts?mm='+encodeURIComponent(mm), {method:'POST'});
+        const txt = await r.text();
+        if(!r.ok){
+          res.textContent = `Fehler ${r.status}: ${txt}`;
+          return;
+        }
+        try{
+          const j = JSON.parse(txt);
+          res.textContent = `OK · entfernt: ${j.removedCycles} Zyklen`;
+        }catch(_){
+          res.textContent = 'OK';
+        }
+        // Vorschau/State sauber neu laden
+        setTimeout(()=>location.reload(), 300);
+      }catch(e){
+        res.textContent = 'Fehler: '+(e?.message||e);
+      }
+    });
+  }
 
+  poll();
   setInterval(poll, 1000);
 })();
 </script>
+
 </body>
 
 </html>

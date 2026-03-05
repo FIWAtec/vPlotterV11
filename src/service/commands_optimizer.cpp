@@ -21,6 +21,7 @@ static void writeLine_(File &out, const String &line) {
 }
 
 bool optimizeCommandsPenMergeMM(double mmThreshold, CommandsOptimizeStats &stats) {
+  stats = CommandsOptimizeStats();
   if (mmThreshold < 0) mmThreshold = 0;
   if (mmThreshold > 20) mmThreshold = 20;
 
@@ -48,10 +49,14 @@ bool optimizeCommandsPenMergeMM(double mmThreshold, CommandsOptimizeStats &stats
   bool havePrev = false;
   double prevX = 0, prevY = 0;
 
+  uint32_t loopCounter = 0;
   while (in.available()) {
     String line = in.readStringUntil('\n');
     line.trim();
     if (line.length() == 0) continue;
+
+    // Avoid WDT resets on large files
+    if ((++loopCounter & 0x3FF) == 0) { delay(0); }
 
     if (line == "p0") {
       stats.inPenLines++;

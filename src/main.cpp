@@ -29,6 +29,7 @@
 #include "display.h"
 #include "phases/phasemanager.h"
 #include "service/weblog.h"
+#include "service/commands_optimizer.h"
 #include "svgmeta.h"
 
 #include <Arduino.h>
@@ -1134,6 +1135,12 @@ void setup()
     penObj["hasPendingUp"]   = pen ? pen->pendingUp() : false;
     penObj["state"]          = penObj["pos"];
 
+    if (runner) {
+      penObj["movesTotal"] = (uint32_t)runner->getPenMovesTotal();
+      penObj["movesUp"]    = (uint32_t)runner->getPenMovesUp();
+      penObj["movesDown"]  = (uint32_t)runner->getPenMovesDown();
+    }
+
     JsonObject perf = doc.createNestedObject("perf");
     perf["loop_ms"]     = (double)gPerf.loop_us_avg / 1000.0;
     perf["yield_ms"]    = (double)gPerf.yield_us_avg / 1000.0;
@@ -1164,8 +1171,37 @@ void setup()
     request->send(200, "application/json; charset=utf-8", out);
   });
 
-  
-  server.on("/setPenMergeMm", HTTP_POST, [](AsyncWebServerRequest *request){
+  server.on("/optimizePenLifts", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!runner) { request->send(503, "text/plain", "Runner not ready"); return; }
+
+    // Allow only when job is NOT actively running (stopped OR paused).
+    if (!(runner->isStopped() || runner->isPaused())) {
+      request->send(409, "text/plain", "Stop or pause required");
+      return;
+    }
+
+    double mm = 0.0;
+    if (request->hasParam("mm", true)) { mm = request->getParam("mm", true)->value().toDouble(); }
+    else if (request->hasParam("mm")) { mm = request->getParam("mm")->value().toDouble(); }
+
+    CommandsOptimizeStats stats;
+    const bool ok = optimizeCommandsPenMergeMM(mm, stats);
+    if (!ok) { request->send(500, "text/plain", "Optimize failed"); return; }
+
+    // After rewriting /commands, force restart from beginning (line 0 after header).
+    runner->requestRestartFromLine(0);
+
+    StaticJsonDocument<320> doc;
+    doc["ok"] = true;
+    doc["mm"] = mm;
+    doc["removedCycles"] = (uint32_t)stats.removedCycles;
+    doc["removedPenLines"] = (uint32_t)stats.removedPenLines;
+    doc["inPenLines"] = (uint32_t)stats.inPenLines;
+    doc["outPenLines"] = (uint32_t)stats.outPenLines;
+    String out; serializeJson(doc, out);
+    request->send(200, "application/json; charset=utf-8", out);
+  });
+server.on("/setPenMergeMm", HTTP_POST, [](AsyncWebServerRequest *request){
     if (!runner) { request->send(503, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"Not ready\"}"); return; }
     if (!request->hasParam("mm", true)) { request->send(400, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"Missing mm\"}"); return; }
 

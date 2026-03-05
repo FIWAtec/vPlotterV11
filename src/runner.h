@@ -3,6 +3,8 @@
 
 #include <cstddef>
 #include <deque>
+#include <stdint.h>   // uint32_t
+#include <cstring>    // strcmp
 #include <LittleFS.h>
 
 #include "movement.h"
@@ -14,11 +16,12 @@ class Runner {
 private:
     struct QueuedCommand {
         enum Type { Pen, Move } type;
-        bool penDown; // only for Pen
-        Movement::Point p; // only for Move
-        bool protect; // do not collinear-merge away (used for arc-expanded points)
-        QueuedCommand(bool down) : type(Pen), penDown(down), p(0,0), protect(false) {}
-        QueuedCommand(Movement::Point pt, bool protect=false) : type(Move), penDown(false), p(pt), protect(protect) {}
+        bool penDown;
+        Movement::Point p;
+        bool protect;
+
+        QueuedCommand(bool down) : type(Pen), penDown(down), p(0, 0), protect(false) {}
+        QueuedCommand(Movement::Point pt, bool protect = false) : type(Move), penDown(false), p(pt), protect(protect) {}
     };
 
     Movement *movement;
@@ -28,19 +31,29 @@ private:
     void initTaskProvider();
     Task* getNextTask();
 
+    // Timing / stats helpers (used by HUD + diagnostics)
+    void tickTiming_();
+
+    uint32_t jobStartMs     = 0;
+    uint32_t lastTickMs     = 0;
+    uint32_t pauseStartMs   = 0;
+    uint32_t totalPausedMs  = 0;
+    uint32_t movingActiveMs = 0;
+
+    bool parked = false;
+
     bool fillLookaheadQueue();
     void optimizeLookaheadQueue();
 
     Task* currentTask = nullptr;
     bool currentTaskCountsDistance = false;
 
-    // For distance split (pen down vs pen up)
     bool currentMoveIsDrawing = false;
 
     bool stopped = true;
     bool paused  = false;
 
-    size_t startLine = 0; 
+    size_t startLine = 0;
 
     Task* prefaceSequence[3];
     int   prefaceIx    = 0;
@@ -51,13 +64,13 @@ private:
 
     File openedFile;
 
-    double headerTotalDistance = 0.0; 
+    double headerTotalDistance = 0.0;
 
-    double jobTotalDistance = 0.0; 
+    double jobTotalDistance = 0.0;
     double jobDistanceSoFar = 0.0;
 
-    double jobDrawDistanceSoFar   = 0.0; // pen down movement only
-    double jobTravelDistanceSoFar = 0.0; // pen up movement only
+    double jobDrawDistanceSoFar   = 0.0;
+    double jobTravelDistanceSoFar = 0.0;
 
     double skippedDistance = 0.0;
 
@@ -71,38 +84,24 @@ private:
     std::deque<QueuedCommand> lookaheadQ;
     bool eofReached = false;
 
-    // Track current pen state so we can select moveSpeedSteps vs printSpeedSteps.
     bool penIsDown = false;
 
     int penSettleMs = 0;
-
-    // Merge short "pen-up travel" segments by skipping p0/p1 when travel <= penMergeMm.
-    // NOTE: This draws a short connector line instead of lifting the pen.
     double penMergeMm = 0.0;
 
-    // ---------- Time / speed metrics ----------
-    uint32_t jobStartMs      = 0;
-    uint32_t lastTickMs      = 0;
-    uint32_t pauseStartMs    = 0;
-    uint32_t totalPausedMs   = 0;
-    uint32_t movingActiveMs  = 0; // time where steppers were actively moving (excludes pen delays)
+    bool pendingPenUp = false;
+    bool pendingPenUpPrevDown = false;
 
-    void tickTiming_();
+    String pushbackLine;
+    bool hasPushbackLine = false;
 
-    // ---------- Restart from scrubbed line ----------
+    // Pen move counters (count only real toggles)
+    uint32_t penMovesTotal = 0;
+    uint32_t penMovesUp    = 0;
+    uint32_t penMovesDown  = 0;
+
     bool restartRequested = false;
     size_t restartLineAfterHeader = 0;
-
-    // ---------- Pause "Park" (Grundstellung) ----------
-    bool parkRequested = false;
-    bool parked        = false;
-    bool returnRequested = false;
-
-    Movement::Point parkTarget = Movement::Point(0,0);
-    Movement::Point parkReturn = Movement::Point(0,0);
-    int parkStage = 0; // 0=idle, 1=goingToPark, 2=parked, 3=returning
-
-    void handlePark_();
 
 public:
     Runner(Movement *movement, Pen *pen, Display *display);
@@ -112,6 +111,10 @@ public:
 
     void setPenMergeMm(double mm);
     double getPenMergeMm() const;
+
+    uint32_t getPenMovesTotal() const;
+    uint32_t getPenMovesUp() const;
+    uint32_t getPenMovesDown() const;
 
     void setStartLine(size_t lineAfterHeader);
     size_t getStartLine() const;
@@ -123,14 +126,7 @@ public:
     void pauseJob();
     void resumeJob();
 
-    // Restart job from a specific commands line (line index after header d/h).
-    // Used for "spooling" in pause UI: robot does not move while spooling, only after play.
     bool requestRestartFromLine(size_t lineAfterHeader);
-
-    // Pause helper: move to a "base" position while staying paused.
-    // Pressing resume will automatically return to the previous XY first, then continue.
-    bool requestParkTo(double xMm, double yMm);
-    bool requestParkToBase(double yMm);
 
     void abortAndGoHome();
 
@@ -141,14 +137,18 @@ public:
     double getDrawDistanceSoFar() const;
     double getTravelDistanceSoFar() const;
 
-    uint32_t getElapsedMs() const;     // excludes paused time
-    uint32_t getMovingActiveMs() const; // excludes pen delays / dwell (movement only)
+    // Runtime stats for UI
+    uint32_t getElapsedMs() const;
+    uint32_t getMovingActiveMs() const;
+    double   getAvgSpeedMmS_MovingOnly() const;
 
-    double getAvgSpeedMmS_MovingOnly() const;
+    // Park / manual positioning while paused
+    bool isParked() const;
+    bool requestParkTo(double xMm, double yMm);
+    bool requestParkToBase(double yMm);
 
     bool isStopped() const;
     bool isPaused() const;
-    bool isParked() const;
 };
 
 #endif

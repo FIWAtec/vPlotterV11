@@ -68,17 +68,21 @@ int Runner::getPenSettleMs() const {
     return penSettleMs;
 }
 
-
-
 void Runner::setPenMergeMm(double mm) {
     if (!(mm >= 0.0)) mm = 0.0;
-    if (mm > 20.0) mm = 20.0;
+    if (mm > 10.0) mm = 10.0;
     penMergeMm = mm;
 }
 
 double Runner::getPenMergeMm() const {
     return penMergeMm;
 }
+
+uint32_t Runner::getPenMovesTotal() const { return penMovesTotal; }
+uint32_t Runner::getPenMovesUp() const    { return penMovesUp; }
+uint32_t Runner::getPenMovesDown() const  { return penMovesDown; }
+
+
 static bool parseG2G3(const String& in, bool& outCw, double& outX, double& outY, double& outI, double& outJ) {
     String s = in;
     s.trim();
@@ -147,6 +151,11 @@ void Runner::initTaskProvider() {
     eofReached = false;
     penIsDown = false;
 
+    pendingPenUp = false;
+    pendingPenUpPrevDown = false;
+    hasPushbackLine = false;
+    pushbackLine = String();
+
     if (openedFile) openedFile.close();
 
     if (!sdCommandsEnsureMounted()) throw std::invalid_argument("SD not mounted");
@@ -212,7 +221,6 @@ void Runner::initTaskProvider() {
     prefaceSequence[prefaceCount++] = new PenTask(true, pen, penSettleMs);
 
     if (startLine > 0) {
-
         if (!(virtualPos.x == startPosition.x && virtualPos.y == startPosition.y)) {
             prefaceSequence[prefaceCount++] = new InterpolatingMovementTask(movement, virtualPos, moveSpeedSteps);
             startPosition = virtualPos;
@@ -236,7 +244,14 @@ bool Runner::fillLookaheadQueue() {
     }
 
     while (!eofReached && (int)lookaheadQ.size() < maxSegments && openedFile.available()) {
-        String line = openedFile.readStringUntil('\n');
+        String line;
+        if (hasPushbackLine) {
+            line = pushbackLine;
+            hasPushbackLine = false;
+            pushbackLine = String();
+        } else {
+            line = openedFile.readStringUntil('\n');
+        }
         line.trim();
         if (line.length() == 0) continue;
 
@@ -244,6 +259,29 @@ bool Runner::fillLookaheadQueue() {
         if (c0 == 'p') {
             const char c1 = (line.length() > 1) ? line.charAt(1) : '0';
             const bool down = (c1 == '1');
+
+            // If we already deferred a pen-up and we see a pen-down without a move in between,
+            // it cancels out (p0 then p1) -> drop both.
+            if (pendingPenUp && down) {
+                pendingPenUp = false;
+                pendingPenUpPrevDown = false;
+                continue;
+            }
+
+            // Defer pen-up to allow merge with very short travel (p0 -> short move -> p1).
+            if (!down) {
+                pendingPenUp = true;
+                // Merge makes sense only if we were drawing before the pen-up.
+                pendingPenUpPrevDown = true;
+                continue;
+            }
+
+            // Flush pending pen-up before pen-down (no merge possible here).
+            if (pendingPenUp) {
+                lookaheadQ.emplace_back(false);
+                pendingPenUp = false;
+                pendingPenUpPrevDown = false;
+            }
 
             // Skip redundant pen commands to avoid unnecessary servo churn.
             if (!lookaheadQ.empty()) {
@@ -322,8 +360,45 @@ bool Runner::fillLookaheadQueue() {
 
         double x = line.substring(0, sep).toDouble();
         double y = line.substring(sep + 1).toDouble();
-        lookaheadQ.emplace_back(Movement::Point(x, y));
-        virtualPos = Movement::Point(x, y);
+        Movement::Point np(x, y);
+
+        // If we have a deferred pen-up, we may merge: p0 -> short move -> p1.
+        if (pendingPenUp && penMergeMm > 0.0 && pendingPenUpPrevDown) {
+            // Peek next non-empty line (one-line lookahead).
+            String nextLine = openedFile.readStringUntil('\n');
+            nextLine.trim();
+            while (nextLine.length() == 0 && openedFile.available()) {
+                nextLine = openedFile.readStringUntil('\n');
+                nextLine.trim();
+            }
+
+            const bool nextIsPenDown = (nextLine.length() > 1 && nextLine.charAt(0) == 'p' && nextLine.charAt(1) == '1');
+            if (nextIsPenDown) {
+                const double d = Movement::distanceBetweenPoints(virtualPos, np);
+                if (d <= penMergeMm) {
+                    // Merge: keep pen down, draw through, drop both p0 and following p1.
+                    pendingPenUp = false;
+                    pendingPenUpPrevDown = false;
+                    lookaheadQ.emplace_back(np);
+                    virtualPos = np;
+                    continue;
+                }
+            }
+
+            // Not merged: push back the peeked line for normal processing.
+            hasPushbackLine = true;
+            pushbackLine = nextLine;
+        }
+
+        // Flush pending pen-up if any (no merge applied).
+        if (pendingPenUp) {
+            lookaheadQ.emplace_back(false);
+            pendingPenUp = false;
+            pendingPenUpPrevDown = false;
+        }
+
+        lookaheadQ.emplace_back(np);
+        virtualPos = np;
     }
 
     if (!openedFile.available()) eofReached = true;
@@ -402,51 +477,6 @@ void Runner::optimizeLookaheadQueue() {
         lookaheadQ.swap(out);
     }
 
-// ------------------------------------------------------------------
-// NEW: Merge short pen-up travels (p0 -> short move -> p1) ON THE FLY.
-// This reduces pen up/down cycles but draws a short connector line.
-// Enabled when penMergeMm > 0.
-// ------------------------------------------------------------------
-if (penMergeMm > 0.0 && !lookaheadQ.empty()) {
-    std::deque<QueuedCommand> out;
-    Movement::Point cur = startPosition;
-    bool penDown = false; // start UP
-
-    for (size_t i = 0; i < lookaheadQ.size(); ++i) {
-        const auto &cmd = lookaheadQ[i];
-
-        // Detect: PenUp, Move, PenDown
-        if (cmd.type == QueuedCommand::Pen && cmd.penDown == false && penDown == true) {
-            if (i + 2 < lookaheadQ.size()
-                && lookaheadQ[i+1].type == QueuedCommand::Move
-                && lookaheadQ[i+2].type == QueuedCommand::Pen
-                && lookaheadQ[i+2].penDown == true) {
-
-                const Movement::Point& np = lookaheadQ[i+1].p;
-                const double d = Movement::distanceBetweenPoints(cur, np);
-                if (d <= penMergeMm) {
-                    // Skip PenUp + PenDown, draw through the short move.
-                    out.emplace_back(np, lookaheadQ[i+1].protect);
-                    cur = np;
-                    // penDown stays true
-                    i += 2;
-                    continue;
-                }
-            }
-        }
-
-        // Default: copy command and update state/cur
-        out.push_back(cmd);
-        if (cmd.type == QueuedCommand::Pen) {
-            penDown = cmd.penDown;
-        } else {
-            cur = cmd.p;
-        }
-    }
-
-    lookaheadQ.swap(out);
-}
-
     // Merge collinear points for consecutive Move-Move-Move blocks between pen commands
     bool changed = true;
     while (changed) {
@@ -512,8 +542,13 @@ Task *Runner::getNextTask() {
     if (cmd.type == QueuedCommand::Pen) {
         currentTaskCountsDistance = false;
         penIsDown = cmd.penDown;
+        if (cmd.penDown != penIsDown) {
+            penIsDown = cmd.penDown;
+            penMovesTotal++;
+            if (penIsDown) penMovesDown++; else penMovesUp++;
+        }
         return cmd.penDown ? (Task*)new PenTask(false, pen, penSettleMs) : (Task*)new PenTask(true, pen, penSettleMs);
-    }
+}
 
     targetPosition = cmd.p;
     currentTaskCountsDistance = true;
@@ -706,12 +741,20 @@ void Runner::dryRun() {
 
 void Runner::pauseJob() {
     if (stopped) return;
+    if (!paused) {
+        pauseStartMs = millis();
+    }
     paused = true;
     WebLog::info("Runner paused");
 }
 
 void Runner::resumeJob() {
     if (stopped) return;
+    if (paused && pauseStartMs > 0) {
+        const uint32_t now = millis();
+        if (now >= pauseStartMs) totalPausedMs += (now - pauseStartMs);
+        pauseStartMs = 0;
+    }
     paused = false;
     WebLog::info("Runner resumed");
 }
