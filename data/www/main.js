@@ -2193,6 +2193,199 @@ function initJobTransformForCommands(commandsText) {
   // keep current transform values, but refresh UI display
   bindJobTransformUiOnce();
   updateJobTransformStatus();
+
+  // Also refresh pen-merge UI (must live in same slide as transform controls)
+  try {
+    bindPenMergeUiOnce();
+    updatePenMergeStatsFromCommands(commandsText || "");
+  } catch (e) {
+    console.warn(e);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Pen-lift merge (reduce p0/p1) in commands BEFORE start drawing
+// Format:
+//   line1: d<totalDistance>
+//   line2: h<height>
+//   then: p1/p0 OR "x y" lines
+// -----------------------------------------------------------------------------
+
+let penMergeUiBound = false;
+
+function countPenTogglesInCommands(commandsText) {
+  if (!commandsText) return 0;
+  const lines = commandsText.split(/\r?\n/);
+  let n = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const s = (lines[i] || "").trim();
+    if (s === "p0" || s === "p1") n++;
+  }
+  return n;
+}
+
+function updatePenMergeStatsFromCommands(commandsText) {
+  const beforeEl = document.getElementById("penMovesBefore");
+  const afterEl = document.getElementById("penMovesAfter");
+  const savedEl = document.getElementById("penMovesSaved");
+  const statusEl = document.getElementById("penMergeStatus");
+  if (!beforeEl || !afterEl || !savedEl || !statusEl) return;
+
+  const before = countPenTogglesInCommands(commandsText || "");
+  beforeEl.textContent = String(before);
+  afterEl.textContent = "-";
+  savedEl.textContent = "-";
+  statusEl.textContent = before > 0 ? "bereit" : "—";
+
+  const pbar = document.getElementById("penMergeProgress");
+  const ptxt = document.getElementById("penMergeProgressText");
+  if (pbar) pbar.style.width = "0%";
+  if (ptxt) ptxt.textContent = "—";
+}
+
+async function mergePenLiftsAsync(commandsText, thresholdMm, onProgress) {
+  const lines = (commandsText || "").split(/\r?\n/);
+  const out = [];
+
+  const total = Math.max(1, lines.length);
+  const report = (i, msg) => {
+    if (!onProgress) return;
+    const pct = Math.max(0, Math.min(100, Math.round((i / total) * 100)));
+    onProgress(pct, msg || "");
+  };
+
+  // keep header lines untouched
+  if (lines.length >= 1) out.push(lines[0]);
+  if (lines.length >= 2) out.push(lines[1]);
+
+  let x = 0;
+  let y = 0;
+  let penDown = false;
+
+  let pendingLift = null;
+
+  for (let i = 2; i < lines.length; i++) {
+    const raw = lines[i];
+    const s = (raw || "").trim();
+    if (!s) continue;
+
+    // yield to UI
+    if ((i % 1500) === 0) {
+      report(i, "Analysiere…");
+      await new Promise(r => setTimeout(r, 0));
+    }
+
+    if (s === "p0" || s === "p1") {
+      if (s === "p0") {
+        // lift: store context so we can decide later at the next p1
+        pendingLift = {
+          outIndex: out.length,
+          liftX: x,
+          liftY: y,
+          wasPenDown: penDown,
+        };
+        penDown = false;
+        out.push("p0");
+        continue;
+      }
+
+      // p1
+      if (pendingLift && pendingLift.wasPenDown) {
+        const dx = x - pendingLift.liftX;
+        const dy = y - pendingLift.liftY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist <= thresholdMm) {
+          // MERGE: remove the earlier p0 and drop this p1
+          out.splice(pendingLift.outIndex, 1);
+          pendingLift = null;
+          penDown = true;
+          continue;
+        }
+      }
+
+      pendingLift = null;
+      penDown = true;
+      out.push("p1");
+      continue;
+    }
+
+    // coordinate line "x y"
+    const sp = s.indexOf(" ");
+    if (sp > 0) {
+      const xs = s.substring(0, sp);
+      const ys = s.substring(sp + 1);
+      const nx = parseFloat(xs);
+      const ny = parseFloat(ys);
+      if (isFinite(nx) && isFinite(ny)) {
+        x = nx;
+        y = ny;
+      }
+    }
+
+    out.push(s);
+  }
+
+  report(lines.length, "Fertig.");
+  return out.join("\n") + "\n";
+}
+
+function bindPenMergeUiOnce() {
+  if (penMergeUiBound) return;
+  penMergeUiBound = true;
+
+  const inp = document.getElementById("penMergeThresholdMm");
+  const btn = document.getElementById("btnPenMergeApply");
+  const beforeEl = document.getElementById("penMovesBefore");
+  const afterEl = document.getElementById("penMovesAfter");
+  const savedEl = document.getElementById("penMovesSaved");
+  const statusEl = document.getElementById("penMergeStatus");
+  const pbar = document.getElementById("penMergeProgress");
+  const ptxt = document.getElementById("penMergeProgressText");
+
+  if (!inp || !btn || !beforeEl || !afterEl || !savedEl || !statusEl || !pbar || !ptxt) {
+    return; // HTML not present
+  }
+
+  const setProgress = (pct, msg) => {
+    pbar.style.width = `${pct}%`;
+    ptxt.textContent = msg || "";
+  };
+
+  btn.addEventListener("click", async () => {
+    const threshold = Math.max(0, Math.min(50, parseFloat(inp.value) || 0));
+
+    // Current active commands text (after zoom/shift apply)
+    const current = uploadConvertedCommands || jobTransformOriginalCommands || "";
+    if (!current) return;
+
+    const before = countPenTogglesInCommands(current);
+    beforeEl.textContent = String(before);
+    afterEl.textContent = "…";
+    savedEl.textContent = "…";
+    statusEl.textContent = "läuft";
+
+    btn.disabled = true;
+    setProgress(0, "Starte…");
+
+    try {
+      const merged = await mergePenLiftsAsync(current, threshold, (pct, msg) => setProgress(pct, msg));
+      const after = countPenTogglesInCommands(merged);
+      uploadConvertedCommands = merged;
+
+      afterEl.textContent = String(after);
+      savedEl.textContent = String(Math.max(0, before - after));
+      statusEl.textContent = "ok";
+
+      // Rebuild preview from merged commands
+      try { await initJobPreviewFromCommands(uploadConvertedCommands); } catch (e) { console.warn(e); }
+    } catch (e) {
+      console.error(e);
+      statusEl.textContent = "Fehler";
+      setProgress(0, String(e && e.message ? e.message : e));
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 async function renderPlannedPreview() {
