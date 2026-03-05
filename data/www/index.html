@@ -1556,7 +1556,7 @@
       if (!isFinite(mm) || mm < 0) mm = 0;
       if (mm > 20) mm = 20;
 
-      el('penMergeResult').textContent = 'Optimierung läuft…';
+      el('penMergeResult').textContent = 'Optimierung läuft… (Pause erforderlich)';
       try{
         var r = await fetch('/optimizePenLifts', {
           method:'POST',
@@ -1570,7 +1570,7 @@
         }
         var j = {};
         try{ j = JSON.parse(t); }catch(e){}
-        el('penMergeResult').textContent = 'OK: removedCycles=' + (j.removedCycles ?? '?') + ', removedPenLines=' + (j.removedPenLines ?? '?') + ', penCmds ' + (j.inPenLines ?? '?') + '→' + (j.outPenLines ?? '?') + ' (Up/Down gesamt). Commands ersetzt. Jetzt mit „Begin malen“ starten.';
+        el('penMergeResult').textContent = 'OK: removedCycles=' + (j.removedCycles ?? '?') + ', removedPenLines=' + (j.removedPenLines ?? '?') + ' → Restart von vorn.';
       }catch(e){
         el('penMergeResult').textContent = 'Fehler: ' + (e && e.message ? e.message : e);
       }

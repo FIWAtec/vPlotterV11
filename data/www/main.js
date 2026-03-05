@@ -2961,7 +2961,8 @@ function initDrawPenSpeedUi() {
 
 
 function init() {
-  initPngUi();
+  initPenMergeUi();
+initPngUi();
   initPerfSettingsUi();
   ui_initEnablePinToggles().catch(() => {});
   startPerfPoll();
@@ -5900,3 +5901,67 @@ function initPulseWidthSettingsUI() {
       renderOverlay(document.getElementById('previewSvg'));
     } catch {}
   }, true);
+
+
+function initPenMergeUi() {
+  const mmEl = document.getElementById("penMergeMmInput");
+  const btn  = document.getElementById("penMergeApplyBtn");
+  const out  = document.getElementById("penMergeStats");
+  if (!mmEl || !btn || !out) return;
+
+  const setBusy = (busy) => {
+    btn.disabled = !!busy;
+    btn.textContent = busy ? "Arbeite..." : "Anwenden (Commands mergen)";
+  };
+
+  btn.addEventListener("click", async () => {
+    const mm = parseFloat(mmEl.value);
+    if (!Number.isFinite(mm) || mm < 0 || mm > 20) {
+      out.textContent = "Fehler: ungültiger mm-Wert (0…20).";
+      return;
+    }
+
+    // Merge rewrites /commands. Preview must match file => we reload model after.
+    setBusy(true);
+    out.textContent = "Merge läuft…";
+
+    try {
+      const body = "mm=" + encodeURIComponent(String(mm));
+      const res = await fetch("/optimizePenLifts", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body
+      });
+
+      const txt = await res.text();
+      let data = null;
+      try { data = JSON.parse(txt); } catch {}
+
+      if (!res.ok) {
+        out.textContent = "Fehler: HTTP " + res.status + " — " + (data?.error || txt || "Failed");
+        setBusy(false);
+        return;
+      }
+
+      // Display stats
+      const removedCycles   = data?.removedCycles ?? data?.removed_cycles ?? "?";
+      const removedPenLines = data?.removedPenLines ?? data?.removed_pen_lines ?? "?";
+      const inPen  = data?.inPenLines ?? data?.in_pen_lines ?? data?.inPenCmds ?? "?";
+      const outPen = data?.outPenLines ?? data?.out_pen_lines ?? data?.outPenCmds ?? "?";
+
+      out.textContent =
+        "OK: removedCycles=" + removedCycles +
+        ", removedPenLines=" + removedPenLines +
+        ", penCmds " + inPen + " → " + outPen +
+        " (Commands ersetzt).";
+
+      // Force reload commands model from device, then refresh preview by reload.
+      // This is robust even if other modules keep old state.
+      setTimeout(() => { location.reload(); }, 250);
+
+    } catch (e) {
+      out.textContent = "Fehler: " + (e?.message || String(e));
+      setBusy(false);
+    }
+  });
+}
