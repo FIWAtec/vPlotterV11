@@ -68,6 +68,17 @@ int Runner::getPenSettleMs() const {
     return penSettleMs;
 }
 
+
+
+void Runner::setPenMergeMm(double mm) {
+    if (!(mm >= 0.0)) mm = 0.0;
+    if (mm > 20.0) mm = 20.0;
+    penMergeMm = mm;
+}
+
+double Runner::getPenMergeMm() const {
+    return penMergeMm;
+}
 static bool parseG2G3(const String& in, bool& outCw, double& outX, double& outY, double& outI, double& outJ) {
     String s = in;
     s.trim();
@@ -197,8 +208,10 @@ void Runner::initTaskProvider() {
 
     progress = -1;
 
+    // Always force pen UP at (re)start to avoid "pen down while travel" situations.
+    prefaceSequence[prefaceCount++] = new PenTask(true, pen, penSettleMs);
+
     if (startLine > 0) {
-        prefaceSequence[prefaceCount++] = new PenTask(true, pen, penSettleMs);
 
         if (!(virtualPos.x == startPosition.x && virtualPos.y == startPosition.y)) {
             prefaceSequence[prefaceCount++] = new InterpolatingMovementTask(movement, virtualPos, moveSpeedSteps);
@@ -388,6 +401,51 @@ void Runner::optimizeLookaheadQueue() {
         // If pending is still set here, it means a pen change at end without movement -> drop it.
         lookaheadQ.swap(out);
     }
+
+// ------------------------------------------------------------------
+// NEW: Merge short pen-up travels (p0 -> short move -> p1) ON THE FLY.
+// This reduces pen up/down cycles but draws a short connector line.
+// Enabled when penMergeMm > 0.
+// ------------------------------------------------------------------
+if (penMergeMm > 0.0 && !lookaheadQ.empty()) {
+    std::deque<QueuedCommand> out;
+    Movement::Point cur = startPosition;
+    bool penDown = false; // start UP
+
+    for (size_t i = 0; i < lookaheadQ.size(); ++i) {
+        const auto &cmd = lookaheadQ[i];
+
+        // Detect: PenUp, Move, PenDown
+        if (cmd.type == QueuedCommand::Pen && cmd.penDown == false && penDown == true) {
+            if (i + 2 < lookaheadQ.size()
+                && lookaheadQ[i+1].type == QueuedCommand::Move
+                && lookaheadQ[i+2].type == QueuedCommand::Pen
+                && lookaheadQ[i+2].penDown == true) {
+
+                const Movement::Point& np = lookaheadQ[i+1].p;
+                const double d = Movement::distanceBetweenPoints(cur, np);
+                if (d <= penMergeMm) {
+                    // Skip PenUp + PenDown, draw through the short move.
+                    out.emplace_back(np, lookaheadQ[i+1].protect);
+                    cur = np;
+                    // penDown stays true
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+
+        // Default: copy command and update state/cur
+        out.push_back(cmd);
+        if (cmd.type == QueuedCommand::Pen) {
+            penDown = cmd.penDown;
+        } else {
+            cur = cmd.p;
+        }
+    }
+
+    lookaheadQ.swap(out);
+}
 
     // Merge collinear points for consecutive Move-Move-Move blocks between pen commands
     bool changed = true;

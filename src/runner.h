@@ -76,6 +76,10 @@ private:
 
     int penSettleMs = 0;
 
+    // Merge short "pen-up travel" segments by skipping p0/p1 when travel <= penMergeMm.
+    // NOTE: This draws a short connector line instead of lifting the pen.
+    double penMergeMm = 0.0;
+
     // ---------- Time / speed metrics ----------
     uint32_t jobStartMs      = 0;
     uint32_t lastTickMs      = 0;
@@ -105,6 +109,9 @@ public:
 
     void setPenSettleMs(int ms);
     int  getPenSettleMs() const;
+
+    void setPenMergeMm(double mm);
+    double getPenMergeMm() const;
 
     void setStartLine(size_t lineAfterHeader);
     size_t getStartLine() const;

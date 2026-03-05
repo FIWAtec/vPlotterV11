@@ -1012,6 +1012,7 @@ window.onload = function () {
 let uploadConvertedCommands = null;
 
 let jobModel = null;
+window.__penMergeMm = 0;
 let selectedStartLine = 0;    // 0-based line index AFTER header lines (d/h)
 let selectedStartDist = 0.0;  // distance at start (mm) within full command path
 let simIsPlaying = false;
@@ -1125,7 +1126,7 @@ function estimateMmPerSec(diag) {
   }
 }
 
-async function parseCommandsToModel(commandsText, homeX = 0, homeY = 0) {
+async function parseCommandsToModel(commandsText, homeX = 0, homeY = 0, penMergeMm = 0) {
   const raw = String(commandsText || "");
   const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
   if (lines.length < 2) throw new Error("Commands zu kurz");
@@ -1136,6 +1137,8 @@ async function parseCommandsToModel(commandsText, homeX = 0, homeY = 0) {
   const height = Number.parseFloat(lines[1].slice(1)) || 0;
 
   let penDown = false;
+  let pendingPenUp = false;
+  let pendingPrevDown = false;
   let cur = { x: Number(homeX) || 0, y: Number(homeY) || 0 };
 
   let minX = cur.x, maxX = cur.x, minY = cur.y, maxY = cur.y;
@@ -1151,13 +1154,59 @@ async function parseCommandsToModel(commandsText, homeX = 0, homeY = 0) {
 
     if (c0 === "p") {
       const c1 = l.length > 1 ? l[1] : "0";
-      penDown = (c1 === "1");
-      lineIndex++;
+      const down = (c1 === "1");
+      if (!down && (Number(penMergeMm) || 0) > 0) {
+        pendingPenUp = true;
+        pendingPrevDown = penDown === true;
+        lineIndex++;
+      } else {
+        if (pendingPenUp && down) {
+          // p0 then p1 with no move -> cancel
+          pendingPenUp = false;
+          pendingPrevDown = false;
+          lineIndex++;
+        } else {
+          if (pendingPenUp) {
+            penDown = false;
+            pendingPenUp = false;
+            pendingPrevDown = false;
+          }
+          penDown = down;
+          lineIndex++;
+        }
+      }
     } else {
       const sep = l.indexOf(" ");
       if (sep >= 0) {
         const x = Number.parseFloat(l.slice(0, sep)) || 0;
         const y = Number.parseFloat(l.slice(sep + 1)) || 0;
+
+        // Apply deferred pen-up if any. If pattern is p0 -> short move -> p1 and len<=penMergeMm,
+        // treat as pen-down (draw through) and consume the following p1.
+        if (pendingPenUp) {
+          const next = lines[i + 1] || "";
+          const isNextP1 = next.length > 1 && next[0] === "p" && next[1] === "1";
+          if (isNextP1 && pendingPrevDown && (Number(penMergeMm) || 0) > 0) {
+            const dxm = x - cur.x;
+            const dym = y - cur.y;
+            const lm = Math.sqrt(dxm * dxm + dym * dym);
+            if (lm <= Number(penMergeMm)) {
+              // merge: keep penDown true, skip upcoming p1
+              pendingPenUp = false;
+              pendingPrevDown = false;
+              // advance i to consume p1
+              i++;
+            } else {
+              penDown = false;
+              pendingPenUp = false;
+              pendingPrevDown = false;
+            }
+          } else {
+            penDown = false;
+            pendingPenUp = false;
+            pendingPrevDown = false;
+          }
+        }
 
         const dx = x - cur.x;
         const dy = y - cur.y;
@@ -1524,7 +1573,7 @@ async function initJobPreviewFromCommands(commandsText) {
     const homeY = Number(currentState?.homeY ?? 0);
 
     const tParse0 = performance.now();
-    jobModel = await parseCommandsToModel(commandsText, homeX, homeY);
+    jobModel = await parseCommandsToModel(commandsText, homeX, homeY, window.__penMergeMm);
 
     // Reset preview view + editor for new commands
     PREVIEW_VIEW.scale = 1.0;
@@ -2346,7 +2395,7 @@ async function ensureJobModelLoadedFromDevice(timeoutMs = 6000) {
     // Parse kann groß sein: einmal den Event-Loop freigeben, damit UI nicht "hängt"
     await new Promise(r => setTimeout(r, 0));
 
-    jobModel = await parseCommandsToModel(txt, homeX, homeY);
+    jobModel = await parseCommandsToModel(txt, homeX, homeY, window.__penMergeMm);
 
     // Event: JobModel verfügbar (für Live-HUD/Stats)
     try {
@@ -3822,6 +3871,46 @@ $("#uploadSvg").off("change").on("change", async function () {
     } catch (e) {
       alert("Play fehlgeschlagen: " + (e?.message || e));
     }
+
+  // Apply pen-merge threshold (mm) and restart from begin (Pause menu only)
+  $("#applyPenMergeBtn").click(async function() {
+    try {
+      const el = document.getElementById("penMergeMm");
+      const mm = Math.max(0, Math.min(10, Number.parseFloat(el?.value ?? "0") || 0));
+      window.__penMergeMm = mm;
+
+      // Persist in firmware
+      const r1 = await fetch("/setPenMergeMm", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ mm: String(mm) })
+      });
+      if (!r1.ok) throw new Error("setPenMergeMm HTTP " + r1.status);
+
+      // Restart from begin (line 0 after header)
+      const r2 = await fetch("/restartJobFromLine", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ line: "0" })
+      });
+      if (!r2.ok) throw new Error("restartJobFromLine HTTP " + r2.status);
+
+      // Reload preview model with the same rule so preview matches plotting
+      try {
+        await ensureJobModelLoadedFromDevice();
+        window.__scrubOverlayDirty = true;
+      } catch {}
+
+      const info = document.getElementById("spoolInfo");
+      if (info) info.textContent = `Pen-Merge angewendet: ${mm.toFixed(1)} mm (Restart)`;
+
+      const panel = document.getElementById("pausePanel");
+      if (panel) panel.style.display = "none";
+    } catch (e) {
+      alert("Optimierung fehlgeschlagen: " + (e?.message || e));
+    }
+  });
+
   });
 
   // Grundstellung: X/2, Y=340 (nur im Pause-Zustand)

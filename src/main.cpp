@@ -66,6 +66,7 @@ constexpr const char* PREF_KEY_PULSE_L   = "pulseLeftUs";
 constexpr const char* PREF_KEY_PULSE_R   = "pulseRightUs";
 constexpr const char* PREF_KEY_PEN_DOWN  = "penDown";
 constexpr const char* PREF_KEY_PEN_UP    = "penUp";
+constexpr const char* PREF_KEY_PENMERGE = "penMerge";
 
 // Planner / quality tuning preference keys
 constexpr const char* PREF_KEY_JUNC_DEV   = "jdev";
@@ -1071,7 +1072,12 @@ void setup()
   }
 
   runner = new Runner(movement, pen, display);
-  if (runner) runner->setPenSettleMs(storedPenSettle);
+  if (runner) {
+    runner->setPenSettleMs(storedPenSettle);
+    const float storedPenMerge = prefs.getFloat(PREF_KEY_PENMERGE, 0.0f);
+    runner->setPenMergeMm((double)storedPenMerge);
+    WebLog::info(String("Loaded pen merge threshold: ") + storedPenMerge + "mm");
+  }
   phaseManager = new PhaseManager(movement, pen, runner, &server);
 
   server.on("/command", HTTP_POST, [](AsyncWebServerRequest *request) {
@@ -1158,7 +1164,28 @@ void setup()
     request->send(200, "application/json; charset=utf-8", out);
   });
 
-  server.on("/pauseJob", HTTP_POST, [](AsyncWebServerRequest *request){
+  
+  server.on("/setPenMergeMm", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (!runner) { request->send(503, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"Not ready\"}"); return; }
+    if (!request->hasParam("mm", true)) { request->send(400, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"Missing mm\"}"); return; }
+
+    const String v = request->getParam("mm", true)->value();
+    double mm = v.toDouble();
+    if (!(mm >= 0.0)) mm = 0.0;
+    if (mm > 10.0) mm = 10.0;
+
+    runner->setPenMergeMm(mm);
+    prefs.putFloat(PREF_KEY_PENMERGE, (float)mm);
+
+    StaticJsonDocument<128> doc;
+    doc["ok"] = true;
+    doc["mm"] = mm;
+    String out;
+    serializeJson(doc, out);
+    request->send(200, "application/json; charset=utf-8", out);
+  });
+
+server.on("/pauseJob", HTTP_POST, [](AsyncWebServerRequest *request){
     if (runner) runner->pauseJob();
     request->send(200, "text/plain", "OK");
   });
